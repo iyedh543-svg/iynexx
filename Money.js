@@ -130,8 +130,17 @@ function updateProductMessage(productId, messageId, channelId) {
   } catch {}
 }
 
+function getAllBalances(guildId) {
+  try {
+    return db.prepare(
+      'SELECT userId, balance FROM money WHERE guildId = ? ORDER BY balance DESC LIMIT 10'
+    ).all(guildId);
+  } catch { return []; }
+}
+
 module.exports = {
   getBalance, addBalance, setBalance, deductBalance,
   startVoiceSession, endVoiceSession,
   createProduct, getProduct, purchaseProduct, updateProductMessage,
+  getAllBalances,
 };

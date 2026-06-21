@@ -328,6 +328,27 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ── /$$top ── ليدر بورد المال (للجميع)
+  if (content === '/$$top') {
+    const top = money.getAllBalances(guildId);
+    if (top.length === 0)
+      return message.reply({ content: '❌ لا يوجد بيانات بعد!' });
+
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines  = top.map((row, i) =>
+      `${medals[i] || `**${i + 1}.**`} <@${row.userId}> — **${fmt(row.balance)}**`
+    );
+
+    const embed = new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setTitle('💰 أغنى 10 أعضاء في السيرفر')
+      .setDescription(lines.join('\n'))
+      .setFooter({ text: 'IYNexx DOLLAR Leaderboard' })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+  }
+
   // ── /BN ──
   if (content === '/BN') {
     const btn = new ButtonBuilder()
@@ -381,6 +402,7 @@ client.on('messageCreate', async (message) => {
         { name: '⚠️ `/Tn: @شخص`',    value: 'يرسل تحذير رسمي (أدمن)' },
         { name: '🔧 `/help`',         value: 'يعرض هذه القائمة (أدمن)' },
         { name: '💰 `/$`',            value: 'عرض رصيدك — للجميع' },
+        { name: '🏆 `/$$top`',        value: 'أغنى 10 أعضاء في السيرفر — للجميع' },
         { name: '➕ `/$:@شخص مبلغ`', value: 'إضافة مال (أدمن/قائد)' },
         { name: '➖ `/-$:@شخص مبلغ`','value': 'سحب مال (أدمن/قائد)' },
         { name: '🛒 `/TR:"عنوان"-DS:"وصف"-IMG:"رابط"-SM:"سعر"(حسابات)`',

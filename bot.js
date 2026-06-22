@@ -23,7 +23,7 @@ const client = new Client({
 require('dotenv').config();
 const TOKEN = process.env.TOKEN;
 const VOICE_CHANNEL_ID = '1516181488020750406';
-const IMAGE_URL        = 'https://media.discordapp.net/attachments/1514645648010379376/1516078712553209957/worldcup_panel.png?ex=6a31fe94&is=6a30ad14&hm=2b1e5abff1618823004c5a7f4a56165260a7a5abc17ee111c5544472c45a573f&=&format=webp&quality=lossless';
+const IMAGE_URL        = 'https://media.discordapp.net/attachments/1466549247779537118/1518663767225794883/file_00000000264471f4b2808307e37574a9.png?ex=6a3abd59&is=6a396bd9&hm=a4b0aaf0e6d2d5c911ff1210fc388dee5f1eaf1511854ce7b18a4f9ba7d23ebe&=&format=webp&quality=lossless&width=1867&height=747';
 
 const MONEY_PER_MESSAGE    = 0.01;
 const MONEY_PER_VOICE_HOUR = 0.02;

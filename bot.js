@@ -30,6 +30,16 @@ const MONEY_PER_VOICE_HOUR = 0.02;
 const MONEY_PER_INVITE     = 1.00;
 const MSG_MONEY_CD_MS      = 60_000;
 
+// =================== إعدادات اللفلات ===================
+const LEVEL_CHANNEL_ID  = '1518729801613971608';
+const LEVEL_UP_IMAGE    = 'https://media.discordapp.net/attachments/1466549247779537118/1518730328649502740/1781747644134.jpg?ex=6a3afb56&is=6a39a9d6&hm=197a29d600ed39bb64a589ea26910bf3bcd4bdf29440d6dae773a7ff1c96fb75&=&format=webp&width=810&height=202';
+const XP_PER_MESSAGE    = 15;   // XP لكل رسالة
+const XP_PER_VOICE_MIN  = 2;    // XP كل دقيقة في المكالمة
+const XP_MSG_CD_MS      = 60_000; // cooldown XP الرسائل (دقيقة)
+
+const xpMsgCooldowns = new Map();
+let voiceXpInterval  = null;
+
 // =================== Caches ===================
 const msgCooldowns = new Map();
 const inviteCache  = new Map(); // guildId → Map(code → uses)
@@ -137,6 +147,7 @@ process.on('unhandledRejection', err => console.error('❌ غير معالج:', 
 // =================== جاهز ===================
 client.once('ready', async () => {
   console.log(`✅ البوت شغال: ${client.user.tag}`);
+  startVoiceXpInterval();
 
   // تحميل الدعوات لكل سيرفر
   for (const guild of client.guilds.cache.values()) {
@@ -148,6 +159,34 @@ client.once('ready', async () => {
     } catch {}
   }
 });
+
+// =================== إشعار اللفل أب ===================
+async function sendLevelUp(guild, userId, newLevel) {
+  try {
+    const channel = await guild.channels.fetch(LEVEL_CHANNEL_ID);
+    if (!channel) return;
+    await channel.send({
+      content: `🎉 مبروك <@${userId}>! وصلت للفل **${newLevel}** 🚀`,
+      files: [{ attachment: LEVEL_UP_IMAGE, name: 'levelup.jpg' }]
+    });
+  } catch {}
+}
+
+// =================== XP الصوت (كل دقيقة) ===================
+function startVoiceXpInterval() {
+  if (voiceXpInterval) return;
+  voiceXpInterval = setInterval(async () => {
+    for (const [guildId, guild] of client.guilds.cache) {
+      for (const [, member] of guild.members.cache) {
+        if (!member.voice.channelId) continue;
+        const result = money.addXp(member.id, guildId, XP_PER_VOICE_MIN);
+        if (result?.leveledUp) {
+          await sendLevelUp(guild, member.id, result.newLevel);
+        }
+      }
+    }
+  }, 60_000);
+}
 
 // =================== دعوة جديدة ===================
 client.on('inviteCreate', inv => {
@@ -175,6 +214,20 @@ client.on('guildMemberAdd', async member => {
       money.addBalance(usedInvite.inviter.id, member.guild.id, MONEY_PER_INVITE);
       usedInvite.inviter.send(
         `🎉 دعوت **${member.user.username}** للسيرفر! حصلت على **${fmt(MONEY_PER_INVITE)}** 💰`
+      ).catch(() => {});
+    }
+  } catch {}
+});
+
+// =================== مكافأة البوست (3$) ===================
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  try {
+    const wasBoosting = oldMember.premiumSince;
+    const isBoosting  = newMember.premiumSince;
+    if (!wasBoosting && isBoosting) {
+      money.addBalance(newMember.id, newMember.guild.id, 3);
+      newMember.send(
+        `🚀 شكراً على البوست! حصلت على **3.00 IND** 💰`
       ).catch(() => {});
     }
   } catch {}
@@ -212,6 +265,37 @@ client.on('messageCreate', async (message) => {
   if (now - last >= MSG_MONEY_CD_MS) {
     msgCooldowns.set(cdKey, now);
     money.addBalance(userId, guildId, MONEY_PER_MESSAGE);
+  }
+
+  // XP من الرسائل (كل دقيقة)
+  const xpKey  = `xp-${guildId}-${userId}`;
+  const lastXp = xpMsgCooldowns.get(xpKey) || 0;
+  if (now - lastXp >= XP_MSG_CD_MS) {
+    xpMsgCooldowns.set(xpKey, now);
+    const xpResult = money.addXp(userId, guildId, XP_PER_MESSAGE);
+    if (xpResult?.leveledUp) {
+      await sendLevelUp(message.guild, userId, xpResult.newLevel);
+    }
+  }
+
+  // ── /level ── عرض اللفل (للجميع)
+  if (content === '/level') {
+    const target = message.mentions.users.first() || message.author;
+    const data   = money.getLevelData(target.id, guildId);
+    const bar    = '█'.repeat(Math.floor((data.xp / data.xpNeeded) * 10)) +
+                   '░'.repeat(10 - Math.floor((data.xp / data.xpNeeded) * 10));
+    return message.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0x9b59b6)
+        .setTitle(`⭐ لفل ${target.username}`)
+        .setThumbnail(target.displayAvatarURL({ extension: 'png' }))
+        .addFields(
+          { name: '🏆 اللفل الحالي', value: `**${data.level}**`,                           inline: true },
+          { name: '✨ XP',           value: `**${Math.floor(data.xp)} / ${data.xpNeeded}**`, inline: true },
+          { name: '📊 التقدم',       value: `\`${bar}\``,                                    inline: false },
+        )
+        .setFooter({ text: 'IYNexx Level System' })]
+    });
   }
 
   // ── /$ ── عرض الرصيد (للجميع)
@@ -402,6 +486,7 @@ client.on('messageCreate', async (message) => {
         { name: '⚠️ `/Tn: @شخص`',    value: 'يرسل تحذير رسمي (أدمن)' },
         { name: '🔧 `/help`',         value: 'يعرض هذه القائمة (أدمن)' },
         { name: '💰 `/$`',            value: 'عرض رصيدك — للجميع' },
+        { name: '⭐ `/level`',         value: 'عرض لفلك أو لفل شخص آخر — للجميع' },
         { name: '🏆 `/$$top`',        value: 'أغنى 10 أعضاء في السيرفر — للجميع' },
         { name: '➕ `/$:@شخص مبلغ`', value: 'إضافة مال (أدمن/قائد)' },
         { name: '➖ `/-$:@شخص مبلغ`','value': 'سحب مال (أدمن/قائد)' },

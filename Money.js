@@ -29,6 +29,13 @@ db.exec(`
     messageId   TEXT DEFAULT '',
     channelId   TEXT DEFAULT ''
   );
+  CREATE TABLE IF NOT EXISTS levels (
+    userId  TEXT NOT NULL,
+    guildId TEXT NOT NULL,
+    xp      REAL DEFAULT 0,
+    level   INTEGER DEFAULT 0,
+    PRIMARY KEY (userId, guildId)
+  );
 `);
 
 // ===== رصيد =====
@@ -138,9 +145,50 @@ function getAllBalances(guildId) {
   } catch { return []; }
 }
 
+// ===== نظام اللفلات =====
+
+// XP المطلوب للفل التالي: 100 * (level + 1)^1.5
+function xpForNextLevel(level) {
+  return Math.floor(100 * Math.pow(level + 1, 1.5));
+}
+
+// إضافة XP وإرجاع { leveledUp, oldLevel, newLevel } إذا رُفع اللفل
+function addXp(userId, guildId, xpAmount) {
+  try {
+    db.prepare(`
+      INSERT INTO levels (userId,guildId,xp,level) VALUES (?,?,0,0)
+      ON CONFLICT(userId,guildId) DO NOTHING
+    `).run(userId, guildId);
+
+    let row = db.prepare('SELECT xp, level FROM levels WHERE userId=? AND guildId=?').get(userId, guildId);
+    let xp    = (row?.xp    ?? 0) + xpAmount;
+    let level = (row?.level ?? 0);
+    const oldLevel = level;
+
+    while (xp >= xpForNextLevel(level)) {
+      xp -= xpForNextLevel(level);
+      level++;
+    }
+
+    db.prepare('UPDATE levels SET xp=?, level=? WHERE userId=? AND guildId=?').run(xp, level, userId, guildId);
+
+    if (level > oldLevel) return { leveledUp: true, oldLevel, newLevel: level };
+    return { leveledUp: false };
+  } catch { return { leveledUp: false }; }
+}
+
+function getLevelData(userId, guildId) {
+  try {
+    const row = db.prepare('SELECT xp, level FROM levels WHERE userId=? AND guildId=?').get(userId, guildId);
+    if (!row) return { xp: 0, level: 0, xpNeeded: xpForNextLevel(0) };
+    return { xp: row.xp, level: row.level, xpNeeded: xpForNextLevel(row.level) };
+  } catch { return { xp: 0, level: 0, xpNeeded: xpForNextLevel(0) }; }
+}
+
 module.exports = {
   getBalance, addBalance, setBalance, deductBalance,
   startVoiceSession, endVoiceSession,
   createProduct, getProduct, purchaseProduct, updateProductMessage,
   getAllBalances,
+  addXp, getLevelData, xpForNextLevel,
 };

@@ -32,7 +32,7 @@ const MSG_MONEY_CD_MS      = 60_000;
 
 // =================== إعدادات اللفلات ===================
 const LEVEL_CHANNEL_ID  = '1518729801613971608';
-const LEVEL_UP_IMAGE    = 'https://cdn.discordapp.com/attachments/1466549247779537118/1518730328649502740/1781747644134.jpg?ex=6a3afb56&is=6a39a9d6&hm=197a29d600ed39bb64a589ea26910bf3bcd4bdf29440d6dae773a7ff1c96fb75&';
+const LEVEL_UP_IMAGE    = 'https://media.discordapp.net/attachments/1466549247779537118/1518730328649502740/1781747644134.jpg?ex=6a3ba416&is=6a3a5296&hm=add49f17a061a93b4f3c0514ad2dd21d63763fb224b376cbbb74d741863bc1e1&=&format=webp&width=810&height=202';
 const XP_PER_MESSAGE    = 15;   // XP لكل رسالة
 const XP_PER_VOICE_MIN  = 2;    // XP كل دقيقة في المكالمة
 const XP_MSG_CD_MS      = 60_000; // cooldown XP الرسائل (دقيقة)

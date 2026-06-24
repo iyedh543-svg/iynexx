@@ -32,7 +32,7 @@ const MSG_MONEY_CD_MS      = 60_000;
 
 // =================== إعدادات اللفلات ===================
 const LEVEL_CHANNEL_ID  = '1518729801613971608';
-const LEVEL_UP_IMAGE    = 'https://media.discordapp.net/attachments/1466549247779537118/1518730328649502740/1781747644134.jpg?ex=6a3ba416&is=6a3a5296&hm=add49f17a061a93b4f3c0514ad2dd21d63763fb224b376cbbb74d741863bc1e1&=&format=webp&width=810&height=202';
+const LEVEL_UP_IMAGE    = 'https://scontent.ftun10-1.fna.fbcdn.net/v/t1.15752-9/728152174_3363735797129093_3349106481751440168_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=fc17b8&_nc_ohc=CvvfrrjF4HsQ7kNvwFE9yp2&_nc_oc=AdrKjEU8-8dgxku9wlQcASbjpcmw7O-pv2v1z8uvDTS0kND9fr_6dkt6baG-Wg5BbSA&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent.ftun10-1.fna&_nc_ss=7a22e&oh=03_Q7cD5gHndULZyOQGMJoBenq7BB4aj2aO6fqE4d4ciMlPg2eCdg&oe=6A636377';
 const XP_PER_MESSAGE    = 15;   // XP لكل رسالة
 const XP_PER_VOICE_MIN  = 2;    // XP كل دقيقة في المكالمة
 const XP_MSG_CD_MS      = 60_000; // cooldown XP الرسائل (دقيقة)

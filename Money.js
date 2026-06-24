@@ -2,7 +2,13 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new Database(path.join(__dirname, 'money.db'));
+const fs = require('fs');
+const DATA_DIR = process.env.RAILWAY_ENVIRONMENT
+  ? '/app/data'   // مسار الـ Volume على Railway
+  : __dirname;    // محلي للتطوير
+
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new Database(path.join(DATA_DIR, 'money.db'));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS money (

@@ -471,7 +471,19 @@ client.on('messageCreate', async (message) => {
         `> ⚡ هذا تحذير رسمي، الاستمرار يعرضك للطرد!`
     });
   }
+// ── /BOT: رسالة ── البوت يرسل الرسالة بدلك (أدمن/قائد)
+  if (content.startsWith('/BOT:')) {
+    if (!isAdmin(message.member))
+      return message.reply({ content: '❌ هذا الأمر للأدمن والقائد فقط!' });
 
+    const text = content.slice(5).trim();
+    if (!text)
+      return message.reply({ content: '⚠️ اكتب رسالة بعد `/BOT:`' });
+
+    await message.delete().catch(() => {});
+    await message.channel.send({ content: text });
+    return;
+  }
   // ── /help ──
   if (content === '/help') {
     if (!message.member.permissions.has('Administrator'))

@@ -41,8 +41,9 @@ const xpMsgCooldowns = new Map();
 let voiceXpInterval  = null;
 
 // =================== Caches ===================
-const msgCooldowns = new Map();
-const inviteCache  = new Map();
+const msgCooldowns  = new Map();
+const slotCooldowns = new Map(); // cooldown السلوت
+const inviteCache   = new Map();
 
 // =================== قائمة المنتخبات ===================
 const teams = [
@@ -513,11 +514,27 @@ client.on('messageCreate', async (message) => {
   }
 
   // ── /slot ──
-  if (content === 'slot') {
-    const BET     = 1;      // تكلفة اللعبة
-    const PRIZE   = 7;      // المكسب عند الفوز
-    const WIN_PCT = 0.30;   // احتمالية الفوز 30%
+  if (content === '/slot') {
+    const BET     = 1;        // تكلفة اللعبة
+    const PRIZE   = 3;        // المكسب عند الفوز
+    const WIN_PCT = 0.10;     // احتمالية الفوز 10%
+    const SLOT_CD = 30_000;   // cooldown 30 ثانية بين كل لعبة
 
+    // فحص الـ cooldown أول شيء
+    const slotKey  = `slot-${guildId}-${userId}`;
+    const lastSlot = slotCooldowns.get(slotKey) || 0;
+    if (now - lastSlot < SLOT_CD) {
+      const remaining = SLOT_CD - (now - lastSlot);
+      return message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0xe67e22)
+          .setTitle('🎰 Slot Machine')
+          .setDescription(`⏳ استنى **${Math.ceil(remaining / 1000)} ثانية** قبل ما تلعب مرة ثانية!`)
+          .setFooter({ text: 'IYNexx Slot Machine • cooldown 30 ثانية' })]
+      });
+    }
+
+    // فحص الرصيد
     const bal = money.getBalance(userId, guildId);
     if (bal < BET) {
       return message.reply({
@@ -533,7 +550,8 @@ client.on('messageCreate', async (message) => {
       });
     }
 
-    // خصم رسوم اللعبة
+    // سجل الوقت وابدأ اللعبة
+    slotCooldowns.set(slotKey, now);
     money.deductBalance(userId, guildId, BET);
 
     // رموز السلوت
@@ -544,17 +562,15 @@ client.on('messageCreate', async (message) => {
 
     let reels;
     if (isWin) {
-      // اختر رمز عشوائي وكرره 3 مرات
       const sym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
       reels = [sym, sym, sym];
     } else {
-      // تأكد إنهم مو متطابقين
       do {
         reels = Array.from({ length: 3 }, () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)]);
       } while (reels[0] === reels[1] && reels[1] === reels[2]);
     }
 
-    const reelDisplay = `\n ${reels[0]}  ${reels[1]}  ${reels[2]} \n`;
+    const reelDisplay = `\n  ${reels[0]}  ${reels[1]}  ${reels[2]}  \n`;
 
     if (isWin) {
       money.addBalance(userId, guildId, PRIZE);
@@ -568,10 +584,10 @@ client.on('messageCreate', async (message) => {
             `✨ **ثلاثة متطابقة! +${fmt(PRIZE)}**`
           )
           .addFields(
-            { name: '💰 رصيدك الآن', value: `**${fmt(newBal)}**`,      inline: true },
+            { name: '💰 رصيدك الآن', value: `**${fmt(newBal)}**`,       inline: true },
             { name: '📈 صافي الربح', value: `**+${fmt(PRIZE - BET)}**`, inline: true },
           )
-          .setFooter({ text: 'IYNexx Slot Machine • فرصة الفوز 30%' })
+          .setFooter({ text: 'IYNexx Slot Machine • فرصة الفوز 10%' })
           .setTimestamp()]
       });
     } else {
@@ -588,7 +604,7 @@ client.on('messageCreate', async (message) => {
             { name: '💰 رصيدك الآن', value: `**${fmt(newBal)}**`, inline: true },
             { name: '📉 الخسارة',     value: `**-${fmt(BET)}**`,   inline: true },
           )
-          .setFooter({ text: 'IYNexx Slot Machine • فرصة الفوز 30%' })
+          .setFooter({ text: 'IYNexx Slot Machine • فرصة الفوز 10%' })
           .setTimestamp()]
       });
     }
@@ -670,7 +686,7 @@ client.on('messageCreate', async (message) => {
         { name: '💸 `/transfer @شخص مبلغ`',       value: 'تحويل مال لعضو آخر — للجميع' },
         { name: '⭐ `/level`',                      value: 'عرض لفلك أو لفل شخص آخر — للجميع' },
         { name: '🏆 `/$$top`',                     value: 'أغنى 10 أعضاء في السيرفر — للجميع' },
-        { name: '🎰 `/slot`',                      value: 'العب السلوت! تدفع **1 IND** وتربح **3 IND** — فرصة الفوز 30% — للجميع' },
+        { name: '🎰 `/slot`',                      value: 'العب السلوت! تدفع **1 IND** وتربح **3 IND** — فرصة الفوز 10% — cooldown 30 ثانية' },
         { name: '➕ `/$:@شخص مبلغ`',              value: 'إضافة مال (أدمن/قائد)' },
         { name: '➖ `/-$:@شخص مبلغ`',             value: 'سحب مال (أدمن/قائد)' },
         { name: '🛒 `/TR:"عنوان"-DS:"وصف"-SM:"سعر"(حسابات)`',

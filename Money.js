@@ -4,8 +4,8 @@ const path = require('path');
 
 const fs = require('fs');
 const DATA_DIR = process.env.RAILWAY_ENVIRONMENT
-  ? '/app/data'   // مسار الـ Volume على Railway
-  : __dirname;    // محلي للتطوير
+  ? '/app/data'
+  : __dirname;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(path.join(DATA_DIR, 'money.db'));
@@ -40,6 +40,13 @@ db.exec(`
     guildId TEXT NOT NULL,
     xp      REAL DEFAULT 0,
     level   INTEGER DEFAULT 0,
+    PRIMARY KEY (userId, guildId)
+  );
+  CREATE TABLE IF NOT EXISTS daily_claims (
+    userId     TEXT NOT NULL,
+    guildId    TEXT NOT NULL,
+    lastClaim  INTEGER NOT NULL,
+    streak     INTEGER DEFAULT 1,
     PRIMARY KEY (userId, guildId)
   );
 `);
@@ -81,6 +88,68 @@ function deductBalance(userId, guildId, amount) {
     setBalance(userId, guildId, bal - amount);
     return true;
   } catch { return false; }
+}
+
+// ===== تحويل مال بين عضوين =====
+// يرجع: { ok: true } أو { ok: false, reason: '...' }
+function transferBalance(fromId, toId, guildId, amount) {
+  try {
+    if (fromId === toId) return { ok: false, reason: 'self' };
+    if (amount <= 0)     return { ok: false, reason: 'invalid_amount' };
+
+    const bal = getBalance(fromId, guildId);
+    if (bal < amount)    return { ok: false, reason: 'insufficient' };
+
+    // عملية atomic بـ transaction
+    const transfer = db.transaction(() => {
+      setBalance(fromId, guildId, bal - amount);
+      addBalance(toId,   guildId, amount);
+    });
+    transfer();
+
+    return {
+      ok: true,
+      newFromBal: getBalance(fromId, guildId),
+      newToBal:   getBalance(toId,   guildId),
+    };
+  } catch { return { ok: false, reason: 'error' }; }
+}
+
+// ===== مكافأة يومية =====
+const DAILY_AMOUNT    = 0.01;
+const DAILY_COOLDOWN  = 24 * 60 * 60 * 1000; // 24 ساعة بـ ms
+
+// يرجع: { ok: true, amount, streak, nextIn } أو { ok: false, nextIn (ms) }
+function claimDaily(userId, guildId) {
+  try {
+    const now = Date.now();
+    const row = db.prepare(
+      'SELECT lastClaim, streak FROM daily_claims WHERE userId=? AND guildId=?'
+    ).get(userId, guildId);
+
+    if (row) {
+      const diff = now - row.lastClaim;
+      if (diff < DAILY_COOLDOWN) {
+        return { ok: false, nextIn: DAILY_COOLDOWN - diff };
+      }
+
+      // إذا فات أكثر من 48 ساعة — ينكسر الـ streak
+      const newStreak = diff < DAILY_COOLDOWN * 2 ? row.streak + 1 : 1;
+
+      db.prepare(
+        'UPDATE daily_claims SET lastClaim=?, streak=? WHERE userId=? AND guildId=?'
+      ).run(now, newStreak, userId, guildId);
+
+      addBalance(userId, guildId, DAILY_AMOUNT);
+      return { ok: true, amount: DAILY_AMOUNT, streak: newStreak };
+    } else {
+      db.prepare(
+        'INSERT INTO daily_claims (userId,guildId,lastClaim,streak) VALUES (?,?,?,1)'
+      ).run(userId, guildId, now);
+      addBalance(userId, guildId, DAILY_AMOUNT);
+      return { ok: true, amount: DAILY_AMOUNT, streak: 1 };
+    }
+  } catch { return { ok: false, nextIn: 0 }; }
 }
 
 // ===== جلسات الصوت =====
@@ -152,13 +221,10 @@ function getAllBalances(guildId) {
 }
 
 // ===== نظام اللفلات =====
-
-// XP المطلوب للفل التالي: 100 * (level + 1)^1.5
 function xpForNextLevel(level) {
   return Math.floor(100 * Math.pow(level + 1, 1.5));
 }
 
-// إضافة XP وإرجاع { leveledUp, oldLevel, newLevel } إذا رُفع اللفل
 function addXp(userId, guildId, xpAmount) {
   try {
     db.prepare(`
@@ -193,6 +259,8 @@ function getLevelData(userId, guildId) {
 
 module.exports = {
   getBalance, addBalance, setBalance, deductBalance,
+  transferBalance,
+  claimDaily,
   startVoiceSession, endVoiceSession,
   createProduct, getProduct, purchaseProduct, updateProductMessage,
   getAllBalances,

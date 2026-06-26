@@ -140,7 +140,6 @@ function buildShopEmbed(product, soldOut) {
     .setFooter({ text: 'IYNexx DOLLAR Store' });
 }
 
-// وقت منسق للـ cooldown
 function fmtTime(ms) {
   const totalSec = Math.floor(ms / 1000);
   const h = Math.floor(totalSec / 3600);
@@ -513,6 +512,88 @@ client.on('messageCreate', async (message) => {
     });
   }
 
+  // ── /slot ──
+  if (content === '/slot') {
+    const BET     = 1;      // تكلفة اللعبة
+    const PRIZE   = 3;      // المكسب عند الفوز
+    const WIN_PCT = 0.30;   // احتمالية الفوز 30%
+
+    const bal = money.getBalance(userId, guildId);
+    if (bal < BET) {
+      return message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0xe74c3c)
+          .setTitle('🎰 Slot Machine')
+          .setDescription(
+            `❌ رصيدك ما يكفي!\n` +
+            `تحتاج **${fmt(BET)}** للعب.\n` +
+            `رصيدك الحالي: **${fmt(bal)}**`
+          )
+          .setFooter({ text: 'IYNexx Slot Machine' })]
+      });
+    }
+
+    // خصم رسوم اللعبة
+    money.deductBalance(userId, guildId, BET);
+
+    // رموز السلوت
+    const SYMBOLS = ['🍒', '🍋', '🍇', '💎', '⭐', '🔔', '7️⃣'];
+
+    // تحديد الفوز أو الخسارة
+    const isWin = Math.random() < WIN_PCT;
+
+    let reels;
+    if (isWin) {
+      // اختر رمز عشوائي وكرره 3 مرات
+      const sym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
+      reels = [sym, sym, sym];
+    } else {
+      // تأكد إنهم مو متطابقين
+      do {
+        reels = Array.from({ length: 3 }, () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)]);
+      } while (reels[0] === reels[1] && reels[1] === reels[2]);
+    }
+
+    const reelDisplay = `╔══╦══╦══╗\n║ ${reels[0]} ║ ${reels[1]} ║ ${reels[2]} ║\n╚══╩══╩══╝`;
+
+    if (isWin) {
+      money.addBalance(userId, guildId, PRIZE);
+      const newBal = money.getBalance(userId, guildId);
+      return message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0xf1c40f)
+          .setTitle('🎰 Slot Machine — فزت! 🎉')
+          .setDescription(
+            `\`\`\`\n${reelDisplay}\n\`\`\`\n` +
+            `✨ **ثلاثة متطابقة! +${fmt(PRIZE)}**`
+          )
+          .addFields(
+            { name: '💰 رصيدك الآن', value: `**${fmt(newBal)}**`,      inline: true },
+            { name: '📈 صافي الربح', value: `**+${fmt(PRIZE - BET)}**`, inline: true },
+          )
+          .setFooter({ text: 'IYNexx Slot Machine • فرصة الفوز 30%' })
+          .setTimestamp()]
+      });
+    } else {
+      const newBal = money.getBalance(userId, guildId);
+      return message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0x95a5a6)
+          .setTitle('🎰 Slot Machine — خسرت 😔')
+          .setDescription(
+            `\`\`\`\n${reelDisplay}\n\`\`\`\n` +
+            `💨 **حظاً أوفر في المرة القادمة!**`
+          )
+          .addFields(
+            { name: '💰 رصيدك الآن', value: `**${fmt(newBal)}**`, inline: true },
+            { name: '📉 الخسارة',     value: `**-${fmt(BET)}**`,   inline: true },
+          )
+          .setFooter({ text: 'IYNexx Slot Machine • فرصة الفوز 30%' })
+          .setTimestamp()]
+      });
+    }
+  }
+
   // ── /BN ──
   if (content === '/BN') {
     const btn = new ButtonBuilder()
@@ -589,6 +670,7 @@ client.on('messageCreate', async (message) => {
         { name: '💸 `/transfer @شخص مبلغ`',       value: 'تحويل مال لعضو آخر — للجميع' },
         { name: '⭐ `/level`',                      value: 'عرض لفلك أو لفل شخص آخر — للجميع' },
         { name: '🏆 `/$$top`',                     value: 'أغنى 10 أعضاء في السيرفر — للجميع' },
+        { name: '🎰 `/slot`',                      value: 'العب السلوت! تدفع **1 IND** وتربح **3 IND** — فرصة الفوز 30% — للجميع' },
         { name: '➕ `/$:@شخص مبلغ`',              value: 'إضافة مال (أدمن/قائد)' },
         { name: '➖ `/-$:@شخص مبلغ`',             value: 'سحب مال (أدمن/قائد)' },
         { name: '🛒 `/TR:"عنوان"-DS:"وصف"-SM:"سعر"(حسابات)`',

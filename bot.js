@@ -21,7 +21,7 @@ const client = new Client({
 
 // =================== الإعدادات ===================
 require('dotenv').config();
-const TOKEN = process.env.TOKEN;
+const TOKEN            = process.env.TOKEN;
 const VOICE_CHANNEL_ID = '1516181488020750406';
 const IMAGE_URL        = 'https://media.discordapp.net/attachments/1466549247779537118/1518663767225794883/file_00000000264471f4b2808307e37574a9.png?ex=6a3abd59&is=6a396bd9&hm=a4b0aaf0e6d2d5c911ff1210fc388dee5f1eaf1511854ce7b18a4f9ba7d23ebe&=&format=webp&quality=lossless&width=1867&height=747';
 
@@ -31,18 +31,18 @@ const MONEY_PER_INVITE     = 1.00;
 const MSG_MONEY_CD_MS      = 60_000;
 
 // =================== إعدادات اللفلات ===================
-const LEVEL_CHANNEL_ID  = '1518729801613971608';
-const LEVEL_UP_IMAGE    = 'https://scontent.ftun10-1.fna.fbcdn.net/v/t1.15752-9/728152174_3363735797129093_3349106481751440168_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=fc17b8&_nc_ohc=CvvfrrjF4HsQ7kNvwFE9yp2&_nc_oc=AdrKjEU8-8dgxku9wlQcASbjpcmw7O-pv2v1z8uvDTS0kND9fr_6dkt6baG-Wg5BbSA&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent.ftun10-1.fna&_nc_ss=7a22e&oh=03_Q7cD5gHndULZyOQGMJoBenq7BB4aj2aO6fqE4d4ciMlPg2eCdg&oe=6A636377';
-const XP_PER_MESSAGE    = 15;   // XP لكل رسالة
-const XP_PER_VOICE_MIN  = 2;    // XP كل دقيقة في المكالمة
-const XP_MSG_CD_MS      = 60_000; // cooldown XP الرسائل (دقيقة)
+const LEVEL_CHANNEL_ID = '1518729801613971608';
+const LEVEL_UP_IMAGE   = 'https://scontent.ftun10-1.fna.fbcdn.net/v/t1.15752-9/728152174_3363735797129093_3349106481751440168_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=fc17b8&_nc_ohc=CvvfrrjF4HsQ7kNvwFE9yp2&_nc_oc=AdrKjEU8-8dgxku9wlQcASbjpcmw7O-pv2v1z8uvDTS0kND9fr_6dkt6baG-Wg5BbSA&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent.ftun10-1.fna&_nc_ss=7a22e&oh=03_Q7cD5gHndULZyOQGMJoBenq7BB4aj2aO6fqE4d4ciMlPg2eCdg&oe=6A636377';
+const XP_PER_MESSAGE   = 15;
+const XP_PER_VOICE_MIN = 2;
+const XP_MSG_CD_MS     = 60_000;
 
 const xpMsgCooldowns = new Map();
 let voiceXpInterval  = null;
 
 // =================== Caches ===================
 const msgCooldowns = new Map();
-const inviteCache  = new Map(); // guildId → Map(code → uses)
+const inviteCache  = new Map();
 
 // =================== قائمة المنتخبات ===================
 const teams = [
@@ -134,10 +134,19 @@ function buildShopEmbed(product, soldOut) {
     .setDescription(product.description)
     .setImage(product.imageUrl || null)
     .addFields(
-      { name: '💰 السعر',   value: fmt(product.price),                              inline: true },
+      { name: '💰 السعر',   value: fmt(product.price),                               inline: true },
       { name: '📦 المتوفر', value: soldOut ? '❌ نفد المخزون' : `${remaining} حساب`, inline: true },
     )
     .setFooter({ text: 'IYNexx DOLLAR Store' });
+}
+
+// وقت منسق للـ cooldown
+function fmtTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${h}س ${m}د ${s}ث`;
 }
 
 // =================== أخطاء ===================
@@ -149,7 +158,6 @@ client.once('ready', async () => {
   console.log(`✅ البوت شغال: ${client.user.tag}`);
   startVoiceXpInterval();
 
-  // تحميل الدعوات لكل سيرفر
   for (const guild of client.guilds.cache.values()) {
     try {
       const invites = await guild.invites.fetch();
@@ -219,16 +227,14 @@ client.on('guildMemberAdd', async member => {
   } catch {}
 });
 
-// =================== مكافأة البوست (3$) ===================
+// =================== مكافأة البوست ===================
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
   try {
     const wasBoosting = oldMember.premiumSince;
     const isBoosting  = newMember.premiumSince;
     if (!wasBoosting && isBoosting) {
       money.addBalance(newMember.id, newMember.guild.id, 3);
-      newMember.send(
-        `🚀 شكراً على البوست! حصلت على **3.00 IND** 💰`
-      ).catch(() => {});
+      newMember.send(`🚀 شكراً على البوست! حصلت على **3.00 IND** 💰`).catch(() => {});
     }
   } catch {}
 });
@@ -259,7 +265,7 @@ client.on('messageCreate', async (message) => {
   const now     = Date.now();
   const content = message.content.trim();
 
-  // مال تلقائي من الرسائل (كل دقيقة)
+  // مال تلقائي من الرسائل
   const cdKey = `${guildId}-${userId}`;
   const last  = msgCooldowns.get(cdKey) || 0;
   if (now - last >= MSG_MONEY_CD_MS) {
@@ -267,7 +273,7 @@ client.on('messageCreate', async (message) => {
     money.addBalance(userId, guildId, MONEY_PER_MESSAGE);
   }
 
-  // XP من الرسائل (كل دقيقة)
+  // XP من الرسائل
   const xpKey  = `xp-${guildId}-${userId}`;
   const lastXp = xpMsgCooldowns.get(xpKey) || 0;
   if (now - lastXp >= XP_MSG_CD_MS) {
@@ -278,19 +284,19 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // ── /level ── عرض اللفل (للجميع)
-  if (content === '/level') {
+  // ── /level ──
+  if (content.startsWith('/level')) {
     const target = message.mentions.users.first() || message.author;
     const data   = money.getLevelData(target.id, guildId);
-    const bar    = '█'.repeat(Math.floor((data.xp / data.xpNeeded) * 10)) +
-                   '░'.repeat(10 - Math.floor((data.xp / data.xpNeeded) * 10));
+    const filled = Math.floor((data.xp / data.xpNeeded) * 10);
+    const bar    = '█'.repeat(filled) + '░'.repeat(10 - filled);
     return message.reply({
       embeds: [new EmbedBuilder()
         .setColor(0x9b59b6)
         .setTitle(`⭐ لفل ${target.username}`)
         .setThumbnail(target.displayAvatarURL({ extension: 'png' }))
         .addFields(
-          { name: '🏆 اللفل الحالي', value: `**${data.level}**`,                           inline: true },
+          { name: '🏆 اللفل الحالي', value: `**${data.level}**`,                            inline: true },
           { name: '✨ XP',           value: `**${Math.floor(data.xp)} / ${data.xpNeeded}**`, inline: true },
           { name: '📊 التقدم',       value: `\`${bar}\``,                                    inline: false },
         )
@@ -298,7 +304,7 @@ client.on('messageCreate', async (message) => {
     });
   }
 
-  // ── /$ ── عرض الرصيد (للجميع)
+  // ── /$ ──
   if (content === '/$') {
     const bal = money.getBalance(userId, guildId);
     return message.reply({
@@ -311,7 +317,82 @@ client.on('messageCreate', async (message) => {
     });
   }
 
-  // ── /$:@mention مبلغ ── إضافة مال (أدمن/قائد)
+  // ── /daily ──
+  if (content === '/daily') {
+    const result = money.claimDaily(userId, guildId);
+
+    if (!result.ok) {
+      return message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0xe74c3c)
+          .setTitle('⏳ المكافأة اليومية')
+          .setDescription(`خذت مكافأتك اليوم! تنجم ترجع بعد:\n**${fmtTime(result.nextIn)}**`)
+          .setFooter({ text: 'IYNexx Daily Reward' })]
+      });
+    }
+
+    const streakMsg = result.streak >= 7
+      ? `🔥 سلسلة ${result.streak} يوم — استمر!`
+      : result.streak > 1
+        ? `⚡ ${result.streak} أيام متتالية`
+        : '📅 أول يوم — ارجع باكر!';
+
+    return message.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xf39c12)
+        .setTitle('🎁 مكافأة يومية!')
+        .setDescription(`حصلت على **${fmt(result.amount)}** 💰\n${streakMsg}`)
+        .addFields(
+          { name: '💼 رصيدك الآن', value: `**${fmt(money.getBalance(userId, guildId))}**`, inline: true },
+          { name: '🔥 السلسلة',    value: `**${result.streak} يوم**`,                      inline: true },
+        )
+        .setFooter({ text: 'IYNexx Daily Reward' })
+        .setTimestamp()]
+    });
+  }
+
+  // ── /transfer @شخص مبلغ ──
+  if (content.startsWith('/transfer')) {
+    const mentioned = message.mentions.users.first();
+    if (!mentioned)
+      return message.reply({ content: '⚠️ مثال: `/transfer @iyed 5`' });
+
+    if (mentioned.id === userId)
+      return message.reply({ content: '❌ ما تقدر تحول لنفسك!' });
+
+    const parts  = content.split(/\s+/);
+    const amount = parseFloat(parts[parts.length - 1]);
+
+    if (isNaN(amount) || amount < 0.01)
+      return message.reply({ content: '⚠️ أدخل مبلغاً صحيحاً (الحد الأدنى 0.01)!' });
+
+    const result = money.transferBalance(userId, mentioned.id, guildId, amount);
+
+    if (!result.ok) {
+      const reasons = {
+        self:           '❌ ما تقدر تحول لنفسك!',
+        invalid_amount: '⚠️ المبلغ غير صحيح!',
+        insufficient:   `❌ رصيدك ما يكفي! رصيدك: **${fmt(money.getBalance(userId, guildId))}**`,
+        error:          '❌ صار خطأ، حاول مرة ثانية.',
+      };
+      return message.reply({ content: reasons[result.reason] || '❌ فشل التحويل.' });
+    }
+
+    return message.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle('💸 تم التحويل بنجاح!')
+        .addFields(
+          { name: '📤 أرسلت إلى',  value: `<@${mentioned.id}>`,           inline: true },
+          { name: '💰 المبلغ',      value: `**${fmt(amount)}**`,            inline: true },
+          { name: '👤 رصيدك الآن', value: `**${fmt(result.newFromBal)}**`, inline: true },
+        )
+        .setFooter({ text: 'IYNexx DOLLAR Transfer' })
+        .setTimestamp()]
+    });
+  }
+
+  // ── /$:@mention مبلغ ──
   if (content.startsWith('/$:')) {
     if (!isAdmin(message.member))
       return message.reply({ content: '❌ هذا الأمر للأدمن والقائد فقط!' });
@@ -334,7 +415,7 @@ client.on('messageCreate', async (message) => {
     });
   }
 
-  // ── /-$:@mention مبلغ ── سحب مال (أدمن/قائد)
+  // ── /-$:@mention مبلغ ──
   if (content.startsWith('/-$:')) {
     if (!isAdmin(message.member))
       return message.reply({ content: '❌ هذا الأمر للأدمن والقائد فقط!' });
@@ -360,12 +441,11 @@ client.on('messageCreate', async (message) => {
     });
   }
 
-  // ── /TR: ── إنشاء منتج في المتجر (أدمن/قائد)
+  // ── /TR: ──
   if (content.startsWith('/TR:')) {
     if (!isAdmin(message.member))
       return message.reply({ content: '❌ هذا الأمر للأدمن والقائد فقط!' });
 
-    // استخراج الحسابات من آخر ( ... )
     const accMatch  = content.match(/\(([^)]*)\)\s*$/);
     const accStr    = accMatch ? accMatch[1] : '';
     const mainPart  = accMatch ? content.slice(0, accMatch.index).trim() : content;
@@ -412,7 +492,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ── /$$top ── ليدر بورد المال (للجميع)
+  // ── /$$top ──
   if (content === '/$$top') {
     const top = money.getAllBalances(guildId);
     if (top.length === 0)
@@ -423,14 +503,14 @@ client.on('messageCreate', async (message) => {
       `${medals[i] || `**${i + 1}.**`} <@${row.userId}> — **${fmt(row.balance)}**`
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(0xf1c40f)
-      .setTitle('💰 أغنى 10 أعضاء في السيرفر')
-      .setDescription(lines.join('\n'))
-      .setFooter({ text: 'IYNexx DOLLAR Leaderboard' })
-      .setTimestamp();
-
-    return message.reply({ embeds: [embed] });
+    return message.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('💰 أغنى 10 أعضاء في السيرفر')
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: 'IYNexx DOLLAR Leaderboard' })
+        .setTimestamp()]
+    });
   }
 
   // ── /BN ──
@@ -450,7 +530,10 @@ client.on('messageCreate', async (message) => {
       .setImage(IMAGE_URL)
       .setTitle('🏆 كأس العالم 2026')
       .setDescription('**اضغط على الزر أدناه واختر منتخبك**\n\n*اختر نفس المنتخب مرة ثانية لإزالة الرتبة*');
-    const btn = new ButtonBuilder().setCustomId('open_country_select').setLabel('🌍 اختر دولتك').setStyle(ButtonStyle.Primary);
+    const btn = new ButtonBuilder()
+      .setCustomId('open_country_select')
+      .setLabel('🌍 اختر دولتك')
+      .setStyle(ButtonStyle.Primary);
     await message.channel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
     await message.delete().catch(() => {});
   }
@@ -471,7 +554,8 @@ client.on('messageCreate', async (message) => {
         `> ⚡ هذا تحذير رسمي، الاستمرار يعرضك للطرد!`
     });
   }
-// ── /BOT: رسالة ── البوت يرسل الرسالة بدلك (أدمن/قائد)
+
+  // ── /BOT: ──
   if (content.startsWith('/BOT:')) {
     if (!isAdmin(message.member))
       return message.reply({ content: '❌ هذا الأمر للأدمن والقائد فقط!' });
@@ -484,27 +568,33 @@ client.on('messageCreate', async (message) => {
     await message.channel.send({ content: text });
     return;
   }
+
   // ── /help ──
   if (content === '/help') {
     if (!message.member.permissions.has('Administrator'))
       return message.reply({ content: '❌ هذا الأمر للأدمن فقط!' });
+
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle('🤖 أوامر البوت')
       .setDescription('━━━━━━━━━━━━━━━━━━━━━━')
       .addFields(
-        { name: '⚽ `/BN`',           value: 'يرسل زر بث المباراة مع @everyone' },
-        { name: '🏆 `/your.country`', value: 'يرسل زر اختيار المنتخب' },
-        { name: '⚠️ `/Tn: @شخص`',    value: 'يرسل تحذير رسمي (أدمن)' },
-        { name: '🔧 `/help`',         value: 'يعرض هذه القائمة (أدمن)' },
-        { name: '💰 `/$`',            value: 'عرض رصيدك — للجميع' },
-        { name: '⭐ `/level`',         value: 'عرض لفلك أو لفل شخص آخر — للجميع' },
-        { name: '🏆 `/$$top`',        value: 'أغنى 10 أعضاء في السيرفر — للجميع' },
-        { name: '➕ `/$:@شخص مبلغ`', value: 'إضافة مال (أدمن/قائد)' },
-        { name: '➖ `/-$:@شخص مبلغ`','value': 'سحب مال (أدمن/قائد)' },
-        { name: '🛒 `/TR:"عنوان"-DS:"وصف"-IMG:"رابط"-SM:"سعر"(حسابات)`',
-          value: 'إنشاء منتج — (أدمن/قائد)\nمثال: `(name:01/psw:123,name:02/psw:456)`' },
+        { name: '⚽ `/BN`',                        value: 'يرسل زر بث المباراة مع @everyone' },
+        { name: '🏆 `/your.country`',              value: 'يرسل زر اختيار المنتخب' },
+        { name: '⚠️ `/Tn: @شخص`',                 value: 'يرسل تحذير رسمي (أدمن)' },
+        { name: '📢 `/BOT: رسالة`',               value: 'البوت يرسل الرسالة بدلك (أدمن/قائد)' },
+        { name: '🔧 `/help`',                      value: 'يعرض هذه القائمة (أدمن)' },
+        { name: '💰 `/$`',                         value: 'عرض رصيدك — للجميع' },
+        { name: '🎁 `/daily`',                     value: 'مكافأة يومية 0.01 IND — للجميع' },
+        { name: '💸 `/transfer @شخص مبلغ`',       value: 'تحويل مال لعضو آخر — للجميع' },
+        { name: '⭐ `/level`',                      value: 'عرض لفلك أو لفل شخص آخر — للجميع' },
+        { name: '🏆 `/$$top`',                     value: 'أغنى 10 أعضاء في السيرفر — للجميع' },
+        { name: '➕ `/$:@شخص مبلغ`',              value: 'إضافة مال (أدمن/قائد)' },
+        { name: '➖ `/-$:@شخص مبلغ`',             value: 'سحب مال (أدمن/قائد)' },
+        { name: '🛒 `/TR:"عنوان"-DS:"وصف"-SM:"سعر"(حسابات)`',
+          value: 'إنشاء منتج — (أدمن/قائد)\nمثال: `(name:01/psw:123,name:02/psw:456)`\nملاحظة: يمكن إضافة `-IMG:"رابط"` اختياري' },
       );
+
     await message.channel.send({ embeds: [embed] });
     await message.delete().catch(() => {});
   }
@@ -525,13 +615,11 @@ client.on('interactionCreate', async (interaction) => {
     if (!product)
       return interaction.editReply({ content: '❌ المنتج غير موجود!' });
 
-    // نفد المخزون
     if (product.soldOut || product.accounts.every(a => a.sold)) {
       await _markSoldOut(interaction.client, product, productId);
       return interaction.editReply({ content: '❌ عذراً، نفد المخزون من هذا المنتج!' });
     }
 
-    // رصيد غير كافٍ
     const bal = money.getBalance(userId, guildId);
     if (bal < product.price) {
       return interaction.editReply({
@@ -539,18 +627,15 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
 
-    // خصم وإعطاء حساب
     money.deductBalance(userId, guildId, product.price);
     const account = money.purchaseProduct(productId);
 
     if (!account) {
-      // نفد بالتزامن — أعد الفلوس
       money.addBalance(userId, guildId, product.price);
       await _markSoldOut(interaction.client, product, productId);
       return interaction.editReply({ content: '❌ نفد المخزون للتو، تم إعادة رصيدك!' });
     }
 
-    // أرسل الحساب للمشتري
     await interaction.editReply({
       embeds: [new EmbedBuilder()
         .setColor(0x2ecc71)
@@ -563,7 +648,6 @@ client.on('interactionCreate', async (interaction) => {
         .setFooter({ text: `خُصم ${fmt(product.price)} من رصيدك` })]
     });
 
-    // تحديث رسالة المتجر
     const updated = money.getProduct(productId);
     await _refreshShopMessage(interaction.client, updated, productId);
     return;

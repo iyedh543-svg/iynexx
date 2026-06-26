@@ -554,7 +554,7 @@ client.on('messageCreate', async (message) => {
       } while (reels[0] === reels[1] && reels[1] === reels[2]);
     }
 
-    const reelDisplay = `╔══╦══╦══╗\n║ ${reels[0]} ║ ${reels[1]} ║ ${reels[2]} ║\n╚══╩══╩══╝`;
+    const reelDisplay = `\n ${reels[0]}  ${reels[1]}  ${reels[2]} \n`;
 
     if (isWin) {
       money.addBalance(userId, guildId, PRIZE);

@@ -516,7 +516,7 @@ client.on('messageCreate', async (message) => {
   // ── /slot ──
   if (content === 'slot') {
     const BET     = 1;        // تكلفة اللعبة
-    const PRIZE   = 3;        // المكسب عند الفوز
+    const PRIZE   = 10;        // المكسب عند الفوز
     const WIN_PCT = 0.10;     // احتمالية الفوز 10%
     const SLOT_CD = 30_000;   // cooldown 30 ثانية بين كل لعبة
 

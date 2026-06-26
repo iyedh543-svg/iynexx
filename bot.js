@@ -513,7 +513,7 @@ client.on('messageCreate', async (message) => {
   }
 
   // ── /slot ──
-  if (content === '/slot') {
+  if (content === 'slot') {
     const BET     = 1;      // تكلفة اللعبة
     const PRIZE   = 7;      // المكسب عند الفوز
     const WIN_PCT = 0.30;   // احتمالية الفوز 30%

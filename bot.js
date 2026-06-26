@@ -530,7 +530,7 @@ client.on('messageCreate', async (message) => {
           .setColor(0xe67e22)
           .setTitle('🎰 Slot Machine')
           .setDescription(`⏳ استنى **${Math.ceil(remaining / 1000)} ثانية** قبل ما تلعب مرة ثانية!`)
-          .setFooter({ text: 'IYNexx Slot Machine • cooldown 30 ثانية' })]
+          .setFooter({ text: 'IYNexx Slot Machine • cooldown 10 ثانية' })]
       });
     }
 

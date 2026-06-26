@@ -518,7 +518,7 @@ client.on('messageCreate', async (message) => {
     const BET     = 1;        // تكلفة اللعبة
     const PRIZE   = 10;        // المكسب عند الفوز
     const WIN_PCT = 0.10;     // احتمالية الفوز 10%
-    const SLOT_CD = 30_000;   // cooldown 30 ثانية بين كل لعبة
+    const SLOT_CD = 10_000;   // cooldown 30 ثانية بين كل لعبة
 
     // فحص الـ cooldown أول شيء
     const slotKey  = `slot-${guildId}-${userId}`;

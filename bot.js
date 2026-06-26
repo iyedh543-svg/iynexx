@@ -515,7 +515,7 @@ client.on('messageCreate', async (message) => {
   // ── /slot ──
   if (content === '/slot') {
     const BET     = 1;      // تكلفة اللعبة
-    const PRIZE   = 3;      // المكسب عند الفوز
+    const PRIZE   = 7;      // المكسب عند الفوز
     const WIN_PCT = 0.30;   // احتمالية الفوز 30%
 
     const bal = money.getBalance(userId, guildId);

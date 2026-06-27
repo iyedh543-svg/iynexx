@@ -187,6 +187,7 @@ function incrementSlotAttempts(userId, guildId) {
 
 // =================== GG نافذة ===================
 function scheduleNextGG() {
+  const GG_CHANNEL_ID = '1460259472575299624';
   const delay = GG_MIN_INTERVAL + Math.random() * (GG_MAX_INTERVAL - GG_MIN_INTERVAL);
   setTimeout(async () => {
     ggActiveUntil = Date.now() + 5 * 60 * 1000;
@@ -728,7 +729,8 @@ client.on('messageCreate', async (message) => {
         { name: '🏆 `GG`',                   value: `اكتبها أول واحد عند التحدي وتربح ${fmt(GG_PRIZE)} — مرتين يومياً` },
         { name: '➕ `/$:@شخص مبلغ`',         value: 'إضافة مال (أدمن/قائد)' },
         { name: '➖ `/-$:@شخص مبلغ`',        value: 'سحب مال (أدمن/قائد)' },
-        { name: '🛒 `/TR:"عنوان"-DS:"وصف"-SM:"سعر"(حسابات)`', value: 'إنشاء منتج (أدمن/قائد)' },
+        { name: '🛒 `/TR:"عنوان"-DS:"وصف"-IMG:"رابط"-SM:"سعر"(حسابات)`',
+          value: 'إنشاء منتج — (أدمن/قائد)\nمثال: `(name:01/psw:123,name:02/psw:456)`' },
       );
     await message.channel.send({ embeds: [embed] });
     await message.delete().catch(() => {});

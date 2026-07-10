@@ -39,12 +39,13 @@ const XP_MSG_CD_MS     = 60_000;
 const SLOT_BET         = 1;
 const SLOT_PRIZE       = 7;
 const SLOT_WIN_PCT     = 0.20;
-const SLOT_MAX_PER_HR  = 5;       // 5 محاولات كل ساعة
+const SLOT_MAX_PER_HR  = 3;       // 3 محاولات كل ساعة
 
 // =================== GG إعدادات ===================
 const GG_PRIZE        = 4;
 const GG_MIN_INTERVAL = 4 * 60 * 60 * 1000;
 const GG_MAX_INTERVAL = 6 * 60 * 60 * 1000;
+const GG_CHANNEL_ID   = '1460259472575299624';
 
 // =================== Anti-Spam إعدادات ===================
 const SPAM_MSG_COUNT  = 5;
@@ -187,31 +188,26 @@ function incrementSlotAttempts(userId, guildId) {
 
 // =================== GG نافذة ===================
 function scheduleNextGG() {
-  const GG_CHANNEL_ID = '1460259472575299624';
   const delay = GG_MIN_INTERVAL + Math.random() * (GG_MAX_INTERVAL - GG_MIN_INTERVAL);
   setTimeout(async () => {
     ggActiveUntil = Date.now() + 5 * 60 * 1000;
     ggWinners.clear();
-    for (const [, guild] of client.guilds.cache) {
-      const channel = guild.channels.cache.find(
-        c => c.isTextBased() && c.permissionsFor(guild.members.me)?.has('SendMessages')
-      );
+    try {
+      const channel = await client.channels.fetch(GG_CHANNEL_ID);
       if (channel) {
-        try {
-          await channel.send({
-            embeds: [new EmbedBuilder()
-              .setColor(0xf39c12)
-              .setTitle('🏆 تحدي GG!')
-              .setDescription(
-                `> أول شخص يكتب **GG** يربح **${fmt(GG_PRIZE)}** 💰\n` +
-                `> عندك **5 دقائق** — يلا!`
-              )
-              .setFooter({ text: 'IYNexx • GG Challenge' })
-              .setTimestamp()]
-          });
-        } catch {}
+        await channel.send({
+          embeds: [new EmbedBuilder()
+            .setColor(0xf39c12)
+            .setTitle('🏆 تحدي GG!')
+            .setDescription(
+              `> أول شخص يكتب **GG** يربح **${fmt(GG_PRIZE)}** 💰\n` +
+              `> عندك **5 دقائق** — يلا!`
+            )
+            .setFooter({ text: 'IYNexx • GG Challenge' })
+            .setTimestamp()]
+        });
       }
-    }
+    } catch {}
     scheduleNextGG();
   }, delay);
 }

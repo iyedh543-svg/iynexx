@@ -916,14 +916,9 @@ async function chkobbaHandleInteraction(interaction) {
         return true;
       }
 
-      const eventLog = game.playCard(interaction.user.id, cardId, 0);
-      await interaction.update({
-        content: eventLog.captured.length
-          ? `✅ لعبت **${eventLog.playedCard.shortLabel}** وأخذت: ${eventLog.captured.map(c => c.shortLabel).join('، ')}${eventLog.isScopa ? ' 🏆 شكوبة!' : ''}`
-          : `✅ لعبت **${eventLog.playedCard.shortLabel}** ووضعتها على الطاولة.`,
-        embeds: [],
-        components: [],
-      });
+      game.playCard(interaction.user.id, cardId, 0);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
 
       await chkobbaUpdatePublicView(interaction.client, messageId, game);
       if (game.finished) chkobbaCleanupGame(messageId);
@@ -952,12 +947,9 @@ async function chkobbaHandleInteraction(interaction) {
       chkobbaPendingCombos.delete(key);
       const comboIndex = parseInt(interaction.values[0], 10) || 0;
 
-      const eventLog = game.playCard(interaction.user.id, cardId, comboIndex);
-      await interaction.update({
-        content: `✅ لعبت **${eventLog.playedCard.shortLabel}** وأخذت: ${eventLog.captured.map(c => c.shortLabel).join('، ')}${eventLog.isScopa ? ' 🏆 شكوبة!' : ''}`,
-        embeds: [],
-        components: [],
-      });
+      game.playCard(interaction.user.id, cardId, comboIndex);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
 
       await chkobbaUpdatePublicView(interaction.client, messageId, game);
       if (game.finished) chkobbaCleanupGame(messageId);

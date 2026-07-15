@@ -916,14 +916,9 @@ async function chkobbaHandleInteraction(interaction) {
         return true;
       }
 
-      const eventLog = game.playCard(interaction.user.id, cardId, 0);
-      await interaction.update({
-        content: eventLog.captured.length
-          ? `✅ لعبت **${eventLog.playedCard.shortLabel}** وأخذت: ${eventLog.captured.map(c => c.shortLabel).join('، ')}${eventLog.isScopa ? ' 🏆 شكوبة!' : ''}`
-          : `✅ لعبت **${eventLog.playedCard.shortLabel}** ووضعتها على الطاولة.`,
-        embeds: [],
-        components: [],
-      });
+      game.playCard(interaction.user.id, cardId, 0);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
 
       await chkobbaUpdatePublicView(interaction.client, messageId, game);
       if (game.finished) chkobbaCleanupGame(messageId);
@@ -952,12 +947,9 @@ async function chkobbaHandleInteraction(interaction) {
       chkobbaPendingCombos.delete(key);
       const comboIndex = parseInt(interaction.values[0], 10) || 0;
 
-      const eventLog = game.playCard(interaction.user.id, cardId, comboIndex);
-      await interaction.update({
-        content: `✅ لعبت **${eventLog.playedCard.shortLabel}** وأخذت: ${eventLog.captured.map(c => c.shortLabel).join('، ')}${eventLog.isScopa ? ' 🏆 شكوبة!' : ''}`,
-        embeds: [],
-        components: [],
-      });
+      game.playCard(interaction.user.id, cardId, comboIndex);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
 
       await chkobbaUpdatePublicView(interaction.client, messageId, game);
       if (game.finished) chkobbaCleanupGame(messageId);
@@ -996,6 +988,8 @@ client.once('ready', async () => {
 
   // تسجيل أمر /chkobba
   await chkobbaRegisterCommands(client);
+  // تسجيل أمر /uno
+  await unoRegisterCommands(client);
 });
 
 // =================== إشعار اللفل أب ===================
@@ -1495,6 +1489,7 @@ client.on('messageCreate', async (message) => {
         { name: '🛒 `/TR:"عنوان"-DS:"وصف"-IMG:"رابط"-SM:"سعر"(حسابات)`',
           value: 'إنشاء منتج — (أدمن/قائد)\nمثال: `(name:01/psw:123,name:02/psw:456)`' },
         { name: '🃏 `/chkobba`',              value: 'ابدأ لعبة شكوبة تونسية (Slash Command) مع لاعب آخر — للجميع' },
+        { name: '🎴 `/uno`',                  value: 'ابدأ لعبة UNO (Slash Command) مع 2-5 لاعبين — للجميع' },
       );
     await message.channel.send({ embeds: [embed] });
     await message.delete().catch(() => {});
@@ -1504,8 +1499,9 @@ client.on('messageCreate', async (message) => {
 // =================== التفاعلات ===================
 client.on('interactionCreate', async (interaction) => {
 
-  // تفويض تفاعلات الشكوبة أولاً
+  // تفويض تفاعلات الشكوبة و UNO أولاً
   if (await chkobbaHandleInteraction(interaction)) return;
+  if (await unoHandleInteraction(interaction)) return;
 
   // ── زر slot_start ──
   if (interaction.isButton() && interaction.customId.startsWith('slot_start_')) {
@@ -1740,5 +1736,620 @@ async function _refreshShopMessage(client, product, productId) {
     }
   } catch {}
 }
+
+// =====================================================================
+// ========================= لعبة UNO =========================
+// =====================================================================
+// قسم مستقل تماماً، لا يلمس أي كود آخر في الملف. صور الأوراق يجب أن
+// تكون في نفس مجلد bot.js (الجذر)، بالأسماء التالية بالضبط:
+//   uno_red_0.jpg ... uno_red_9.jpg        (والمثل لـ yellow / green / blue)
+//   uno_red_skip.jpg, uno_red_reverse.jpg, uno_red_draw2.jpg (ونظائرها لكل لون)
+//   uno_wild.jpg
+//   uno_wild4.jpg
+// (المجموع: 4 ألوان × 12 صورة + صورتا wild = 50 صورة فريدة)
+
+const UNO_COLORS = ['red', 'yellow', 'green', 'blue'];
+const UNO_COLOR_LABELS_AR = { red: '🔴 أحمر', yellow: '🟡 أصفر', green: '🟢 أخضر', blue: '🔵 أزرق' };
+const UNO_TYPE_LABELS_AR = { skip: 'حظر', reverse: 'عكس', draw2: '+2' };
+const UNO_MIN_PLAYERS = 2;
+const UNO_MAX_PLAYERS = 5;
+const UNO_HAND_SIZE = 7;
+const UNO_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+
+let unoCardIdCounter = 1;
+
+class UnoCard {
+  constructor(color, type, value = null) {
+    this.color = color;
+    this.type = type;
+    this.value = value;
+    this.id = `uno_${unoCardIdCounter++}`;
+  }
+
+  get isWild() { return this.type === 'wild' || this.type === 'wild4'; }
+
+  get label() {
+    if (this.type === 'wild') return '🌈 وايلد';
+    if (this.type === 'wild4') return '🌈 وايلد +4';
+    const colorLabel = UNO_COLOR_LABELS_AR[this.color] || '';
+    if (this.type === 'number') return `${colorLabel} ${this.value}`;
+    return `${colorLabel} ${UNO_TYPE_LABELS_AR[this.type]}`;
+  }
+
+  get imageName() {
+    if (this.type === 'wild') return 'uno_wild.jpg';
+    if (this.type === 'wild4') return 'uno_wild4.jpg';
+    if (this.type === 'number') return `uno_${this.color}_${this.value}.jpg`;
+    return `uno_${this.color}_${this.type}.jpg`;
+  }
+}
+
+function unoCreateFullDeck() {
+  const cards = [];
+  for (const color of UNO_COLORS) {
+    cards.push(new UnoCard(color, 'number', 0));
+    for (let v = 1; v <= 9; v++) {
+      cards.push(new UnoCard(color, 'number', v));
+      cards.push(new UnoCard(color, 'number', v));
+    }
+    for (let i = 0; i < 2; i++) {
+      cards.push(new UnoCard(color, 'skip'));
+      cards.push(new UnoCard(color, 'reverse'));
+      cards.push(new UnoCard(color, 'draw2'));
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    cards.push(new UnoCard(null, 'wild'));
+    cards.push(new UnoCard(null, 'wild4'));
+  }
+  return cards;
+}
+
+function unoShuffle(array) {
+  const arr = array.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function unoCardMatches(card, topCard, activeColor) {
+  if (card.isWild) return true;
+  const targetColor = activeColor || topCard.color;
+  if (card.color === targetColor) return true;
+  if (card.type === 'number' && topCard.type === 'number' && card.value === topCard.value) return true;
+  if (card.type !== 'number' && card.type === topCard.type) return true;
+  return false;
+}
+
+class UnoPlayer {
+  constructor(userId) {
+    this.userId = userId;
+    this.hand = [];
+  }
+}
+
+class UnoGame {
+  constructor(playerIds) {
+    this.order = [...playerIds];
+    this.players = {};
+    for (const pid of this.order) this.players[pid] = new UnoPlayer(pid);
+    this.direction = 1;
+    this.currentIndex = 0;
+    this.deck = [];
+    this.discardPile = [];
+    this.activeColor = null;
+    this.finished = false;
+    this.winnerId = null;
+    this.log = [];
+    this.turnDeadline = Date.now() + UNO_TURN_TIMEOUT_MS;
+    this._start();
+  }
+
+  _start() {
+    this.deck = unoShuffle(unoCreateFullDeck());
+    for (const pid of this.order) {
+      this.players[pid].hand.push(...this.deck.splice(0, UNO_HAND_SIZE));
+    }
+    let first = this.deck.shift();
+    while (first.isWild) {
+      this.deck.push(first);
+      this.deck = unoShuffle(this.deck);
+      first = this.deck.shift();
+    }
+    this.discardPile.push(first);
+    this.activeColor = first.color;
+    this.log.push('🎴 تم توزيع الأوراق، بداية اللعبة!');
+    if (first.type === 'skip') this._advance(2);
+    else if (first.type === 'reverse') { this.direction *= -1; if (this.order.length === 2) this._advance(1); }
+    else if (first.type === 'draw2') { this._drawCards(this.currentPlayerId, 2); this._advance(2); }
+  }
+
+  get topCard() { return this.discardPile[this.discardPile.length - 1]; }
+  get currentPlayerId() { return this.order[this.currentIndex]; }
+  isParticipant(userId) { return Object.prototype.hasOwnProperty.call(this.players, userId); }
+
+  _advance(steps = 1) {
+    const n = this.order.length;
+    this.currentIndex = ((this.currentIndex + this.direction * steps) % n + n) % n;
+    this.turnDeadline = Date.now() + UNO_TURN_TIMEOUT_MS;
+  }
+
+  _ensureDeckHasCards(count) {
+    while (this.deck.length < count) {
+      if (this.discardPile.length <= 1) break;
+      const top = this.discardPile.pop();
+      const reshuffled = unoShuffle(this.discardPile);
+      this.deck.push(...reshuffled);
+      this.discardPile = [top];
+    }
+  }
+
+  _drawCards(userId, count) {
+    this._ensureDeckHasCards(count);
+    const drawn = this.deck.splice(0, count);
+    this.players[userId].hand.push(...drawn);
+    return drawn;
+  }
+
+  previewPlayable(userId) {
+    const player = this.players[userId];
+    return player.hand.filter(c => unoCardMatches(c, this.topCard, this.activeColor));
+  }
+
+  playCard(userId, cardId, chosenColor = null) {
+    if (this.finished) throw new Error('GAME_FINISHED');
+    if (userId !== this.currentPlayerId) throw new Error('NOT_YOUR_TURN');
+    const player = this.players[userId];
+    const idx = player.hand.findIndex(c => c.id === cardId);
+    if (idx === -1) throw new Error('CARD_NOT_IN_HAND');
+    const card = player.hand[idx];
+    if (!unoCardMatches(card, this.topCard, this.activeColor)) throw new Error('CARD_NOT_PLAYABLE');
+    if (card.isWild && !chosenColor) throw new Error('COLOR_REQUIRED');
+
+    player.hand.splice(idx, 1);
+    this.discardPile.push(card);
+    this.activeColor = card.isWild ? chosenColor : card.color;
+
+    this.log.push(`<@${userId}> لعب **${card.label}**`);
+    if (this.log.length > 6) this.log.shift();
+
+    if (player.hand.length === 0) {
+      this.finished = true;
+      this.winnerId = userId;
+      return { card, gameOver: true };
+    }
+
+    if (card.type === 'reverse') {
+      this.direction *= -1;
+      this._advance(1);
+    } else if (card.type === 'skip') {
+      this._advance(2);
+    } else if (card.type === 'draw2') {
+      const nextId = this.order[((this.currentIndex + this.direction) % this.order.length + this.order.length) % this.order.length];
+      this._drawCards(nextId, 2);
+      this.log.push(`<@${nextId}> سحب ورقتين 🥲`);
+      this._advance(2);
+    } else if (card.type === 'wild4') {
+      const nextId = this.order[((this.currentIndex + this.direction) % this.order.length + this.order.length) % this.order.length];
+      this._drawCards(nextId, 4);
+      this.log.push(`<@${nextId}> سحب 4 أوراق 🥲`);
+      this._advance(2);
+    } else {
+      this._advance(1);
+    }
+
+    return { card, gameOver: false };
+  }
+
+  drawCard(userId) {
+    if (this.finished) throw new Error('GAME_FINISHED');
+    if (userId !== this.currentPlayerId) throw new Error('NOT_YOUR_TURN');
+    const drawn = this._drawCards(userId, 1);
+    this._advance(1);
+    return drawn[0] || null;
+  }
+
+  abort(reason, byUserId = null) {
+    this.finished = true;
+    this.result = { aborted: true, reason, byUserId };
+  }
+
+  isTimedOut() { return !this.finished && Date.now() > this.turnDeadline; }
+}
+
+// ---------- إدارة الجلسات (لوبيات + لعبات جارية) ----------
+const unoLobbies = new Map();
+const unoActiveGames = new Map();
+const unoUserToGame = new Map();
+const unoGameChannels = new Map();
+const unoTurnTimers = new Map();
+const unoPendingWild = new Map();
+
+function unoIsUserBusy(userId) { return unoUserToGame.has(userId); }
+
+async function unoRegisterCommands(discordClient) {
+  const command = new SlashCommandBuilder().setName('uno').setDescription('ابدأ لعبة UNO مع أصحابك في القناة');
+  try {
+    const guildId = process.env.CHKOBBA_GUILD_ID;
+    if (guildId) {
+      const guild = await discordClient.guilds.fetch(guildId);
+      await guild.commands.create(command);
+      console.log(`✅ تم تسجيل أمر /uno على السيرفر ${guildId}`);
+    } else {
+      await discordClient.application.commands.create(command);
+      console.log('✅ تم تسجيل أمر /uno عالمياً (قد يستغرق ظهوره حتى ساعة)');
+    }
+  } catch (err) {
+    console.error('❌ فشل تسجيل أمر UNO:', err.message);
+  }
+}
+
+function unoCardAttachment(card) {
+  const filePath = path.join(__dirname, card.imageName);
+  return new AttachmentBuilder(filePath, { name: card.imageName });
+}
+
+function unoBuildPlayerCountRow() {
+  const row = new ActionRowBuilder();
+  for (let n = UNO_MIN_PLAYERS; n <= UNO_MAX_PLAYERS; n++) {
+    row.addComponents(new ButtonBuilder().setCustomId(`uno_count_${n}`).setLabel(`${n} لاعبين`).setStyle(ButtonStyle.Primary));
+  }
+  return row;
+}
+
+function unoBuildLobbyView(lobby) {
+  const embed = new EmbedBuilder()
+    .setColor(0xe74c3c)
+    .setTitle('🎴 لعبة UNO — بانتظار اللاعبين')
+    .setDescription(
+      `**عدد اللاعبين المطلوب:** ${lobby.targetCount}\n` +
+      `**انضم حتى الآن (${lobby.joined.length}/${lobby.targetCount}):**\n` +
+      lobby.joined.map(id => `• <@${id}>`).join('\n')
+    )
+    .setFooter({ text: 'IYNexx • UNO' })
+    .setTimestamp();
+
+  const btn = new ButtonBuilder()
+    .setCustomId(`uno_join_${lobby.messageId}`)
+    .setLabel('🎮 انضمام للعب')
+    .setStyle(ButtonStyle.Success)
+    .setDisabled(lobby.joined.length >= lobby.targetCount);
+
+  return { embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] };
+}
+
+function unoBuildPublicGameView(game, messageId) {
+  const embeds = [];
+  const files = [];
+
+  const main = new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle('🎴 UNO — اللعبة جارية')
+    .addFields(
+      { name: '👥 اللاعبون', value: game.order.map(pid => `<@${pid}> (${game.players[pid].hand.length} ورقة)`).join('\n'), inline: false },
+      { name: '🀄 الدور الحالي', value: `<@${game.currentPlayerId}>`, inline: true },
+      { name: '🎨 اللون الحالي', value: UNO_COLOR_LABELS_AR[game.activeColor] || '—', inline: true },
+      { name: '↩️ الاتجاه', value: game.direction === 1 ? 'إلى الأمام ➡️' : 'إلى الخلف ⬅️', inline: true },
+    )
+    .setFooter({ text: 'IYNexx • UNO' })
+    .setTimestamp();
+
+  if (game.log.length > 0) main.addFields({ name: '📜 آخر الأحداث', value: game.log.slice(-4).join('\n') });
+  embeds.push(main);
+
+  const topAtt = unoCardAttachment(game.topCard);
+  files.push(topAtt);
+  embeds.push(new EmbedBuilder().setColor(0xf1c40f).setTitle(`🔝 آخر ورقة: ${game.topCard.label}`).setThumbnail(`attachment://${game.topCard.imageName}`));
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`uno_hand_${messageId}`).setLabel('🃏 عرض يدي واللعب').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`uno_quit_${messageId}`).setLabel('🚪 الانسحاب').setStyle(ButtonStyle.Danger)
+  );
+
+  return { embeds, files, components: [row] };
+}
+
+function unoBuildHandView(game, playerId, messageId) {
+  const player = game.players[playerId];
+  const embeds = [];
+  const files = [];
+
+  embeds.push(
+    new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle('🃏 يدك الحالية')
+      .setDescription('اختر ورقة للعبها، أو اسحب ورقة جديدة إن لم تجد ورقة مناسبة:')
+      .setFooter({ text: 'هذه الرسالة تظهر لك فقط' })
+  );
+
+  for (const card of player.hand) {
+    const att = unoCardAttachment(card);
+    files.push(att);
+    embeds.push(new EmbedBuilder().setColor(0x1abc9c).setTitle(card.label).setThumbnail(`attachment://${card.imageName}`));
+  }
+
+  const options = player.hand.map(card => {
+    const isPlayable = unoCardMatches(card, game.topCard, game.activeColor);
+    return new StringSelectMenuOptionBuilder().setLabel(`${card.label}${isPlayable ? '' : ' (غير قابلة للعب)'}`).setValue(card.id);
+  });
+
+  const select = new StringSelectMenuBuilder().setCustomId(`uno_play_${messageId}`).setPlaceholder('🎴 اختر ورقة لتلعبها').addOptions(options);
+  const drawBtn = new ButtonBuilder().setCustomId(`uno_draw_${messageId}`).setLabel('🂠 اسحب ورقة').setStyle(ButtonStyle.Secondary);
+
+  return { embeds, files, components: [new ActionRowBuilder().addComponents(select), new ActionRowBuilder().addComponents(drawBtn)] };
+}
+
+function unoBuildColorPickerView(messageId, cardId) {
+  const embed = new EmbedBuilder().setColor(0x9b59b6).setTitle('🎨 اختر لوناً').setDescription('اختر اللون الذي سيصبح اللون الحالي:');
+  const row = new ActionRowBuilder().addComponents(
+    UNO_COLORS.map(c => new ButtonBuilder().setCustomId(`uno_color_${messageId}_${cardId}_${c}`).setLabel(UNO_COLOR_LABELS_AR[c]).setStyle(ButtonStyle.Secondary))
+  );
+  return { embeds: [embed], components: [row] };
+}
+
+function unoBuildFinalEmbed(game) {
+  return new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('🏁 انتهت لعبة UNO!')
+    .setDescription(`🏆 الفائز: <@${game.winnerId}>`)
+    .setFooter({ text: 'IYNexx • UNO' })
+    .setTimestamp();
+}
+
+function unoBuildAbortEmbed(reason, byUserId) {
+  const reasons = {
+    timeout: '⏳ انتهت اللعبة بسبب انتهاء وقت أحد اللاعبين.',
+    left: `🚪 انسحب <@${byUserId}> من اللعبة، تم إلغاء المباراة.`,
+    error: '⚠️ حدث خطأ غير متوقع، تم إلغاء المباراة.',
+  };
+  return new EmbedBuilder().setColor(0xe74c3c).setTitle('❌ تم إلغاء لعبة UNO').setDescription(reasons[reason] || 'تم إلغاء اللعبة.').setFooter({ text: 'IYNexx • UNO' });
+}
+
+function unoParseAfterPrefix(customId, prefix) { return customId.slice(prefix.length); }
+
+async function unoFetchPublicMessage(discordClient, messageId) {
+  const channelId = unoGameChannels.get(messageId);
+  if (!channelId) return null;
+  try {
+    const channel = await discordClient.channels.fetch(channelId);
+    return await channel.messages.fetch(messageId);
+  } catch { return null; }
+}
+
+async function unoUpdatePublicView(discordClient, messageId, game) {
+  const message = await unoFetchPublicMessage(discordClient, messageId);
+  if (!message) return;
+  try {
+    if (game.finished) {
+      if (game.result?.aborted) await message.edit({ embeds: [unoBuildAbortEmbed(game.result.reason, game.result.byUserId)], components: [], files: [] });
+      else await message.edit({ embeds: [unoBuildFinalEmbed(game)], components: [], files: [] });
+    } else {
+      await message.edit(unoBuildPublicGameView(game, messageId));
+    }
+  } catch (err) { console.error('❌ فشل تحديث لوحة UNO العامة:', err.message); }
+}
+
+function unoClearTimer(messageId) {
+  const t = unoTurnTimers.get(messageId);
+  if (t) clearTimeout(t);
+  unoTurnTimers.delete(messageId);
+}
+
+function unoScheduleTimeout(discordClient, messageId) {
+  unoClearTimer(messageId);
+  const timer = setTimeout(async () => {
+    const game = unoActiveGames.get(messageId);
+    if (!game || game.finished) return;
+    if (!game.isTimedOut()) return;
+    game.abort('timeout');
+    await unoUpdatePublicView(discordClient, messageId, game);
+    unoCleanupGame(messageId);
+  }, UNO_TURN_TIMEOUT_MS + 500);
+  unoTurnTimers.set(messageId, timer);
+}
+
+function unoCleanupGame(messageId) {
+  unoClearTimer(messageId);
+  unoGameChannels.delete(messageId);
+  const game = unoActiveGames.get(messageId);
+  if (game) for (const pid of game.order) unoUserToGame.delete(pid);
+  unoActiveGames.delete(messageId);
+  for (const key of [...unoPendingWild.keys()]) if (key.startsWith(`${messageId}:`)) unoPendingWild.delete(key);
+}
+
+async function unoSafeReplyEphemeral(interaction, content) {
+  const payload = { content, ephemeral: true };
+  try {
+    if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+    else await interaction.reply(payload);
+  } catch (err) { console.error('❌ فشل رد سرّي في UNO:', err.message); }
+}
+
+async function unoStartGameFromLobby(discordClient, lobby) {
+  const game = new UnoGame(lobby.joined);
+  unoActiveGames.set(lobby.messageId, game);
+  for (const pid of lobby.joined) unoUserToGame.set(pid, lobby.messageId);
+  unoGameChannels.set(lobby.messageId, lobby.channelId);
+  unoLobbies.delete(lobby.messageId);
+  await unoUpdatePublicView(discordClient, lobby.messageId, game);
+  unoScheduleTimeout(discordClient, lobby.messageId);
+}
+
+async function unoHandleInteraction(interaction) {
+  try {
+    if (interaction.isChatInputCommand() && interaction.commandName === 'uno') {
+      if (unoIsUserBusy(interaction.user.id)) {
+        await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة UNO جارية!', ephemeral: true });
+        return true;
+      }
+      const embed = new EmbedBuilder()
+        .setColor(0xe74c3c)
+        .setTitle('🎴 UNO')
+        .setDescription('كم عدد اللاعبين؟ اختر من الأزرار أدناه:')
+        .setFooter({ text: 'IYNexx • UNO' });
+      await interaction.reply({ embeds: [embed], components: [unoBuildPlayerCountRow()] });
+      const msg = await interaction.fetchReply();
+      unoLobbies.set(msg.id, { hostId: interaction.user.id, targetCount: null, joined: [], channelId: interaction.channelId, messageId: msg.id, awaitingCount: true });
+      return true;
+    }
+
+    const customId = interaction.customId;
+    if (!customId || !customId.startsWith('uno_')) return false;
+
+    if (interaction.isButton() && customId.startsWith('uno_count_')) {
+      const messageId = interaction.message.id;
+      const lobby = unoLobbies.get(messageId);
+      if (!lobby || !lobby.awaitingCount) {
+        await interaction.reply({ content: '❌ هذا الطلب لم يعد متاحاً.', ephemeral: true });
+        return true;
+      }
+      if (interaction.user.id !== lobby.hostId) {
+        await interaction.reply({ content: '⛔ فقط من بدأ اللعبة يمكنه اختيار عدد اللاعبين.', ephemeral: true });
+        return true;
+      }
+      const count = parseInt(unoParseAfterPrefix(customId, 'uno_count_'), 10);
+      lobby.targetCount = count;
+      lobby.joined = [lobby.hostId];
+      lobby.awaitingCount = false;
+      unoUserToGame.set(lobby.hostId, messageId);
+      unoGameChannels.set(messageId, lobby.channelId);
+      await interaction.update(unoBuildLobbyView(lobby));
+      return true;
+    }
+
+    if (interaction.isButton() && customId.startsWith('uno_join_')) {
+      const messageId = unoParseAfterPrefix(customId, 'uno_join_');
+      const lobby = unoLobbies.get(messageId);
+      if (!lobby) {
+        await interaction.reply({ content: '❌ هذا اللوبي لم يعد متاحاً.', ephemeral: true });
+        return true;
+      }
+      if (lobby.joined.includes(interaction.user.id)) {
+        await interaction.reply({ content: '✅ أنت منضم بالفعل!', ephemeral: true });
+        return true;
+      }
+      if (unoIsUserBusy(interaction.user.id)) {
+        await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة أخرى!', ephemeral: true });
+        return true;
+      }
+      if (lobby.joined.length >= lobby.targetCount) {
+        await interaction.reply({ content: '❌ اكتمل عدد اللاعبين بالفعل.', ephemeral: true });
+        return true;
+      }
+
+      lobby.joined.push(interaction.user.id);
+      unoUserToGame.set(interaction.user.id, messageId);
+
+      await interaction.update(unoBuildLobbyView(lobby));
+      if (lobby.joined.length >= lobby.targetCount) {
+        await unoStartGameFromLobby(interaction.client, lobby);
+      }
+      return true;
+    }
+
+    if (interaction.isButton() && customId.startsWith('uno_hand_')) {
+      const messageId = unoParseAfterPrefix(customId, 'uno_hand_');
+      const game = unoActiveGames.get(messageId);
+      if (!game || game.finished) { await interaction.reply({ content: '❌ لا توجد لعبة نشطة هنا.', ephemeral: true }); return true; }
+      if (!game.isParticipant(interaction.user.id)) { await interaction.reply({ content: '⛔ هذه ليست لعبتك!', ephemeral: true }); return true; }
+      if (interaction.user.id !== game.currentPlayerId) { await interaction.reply({ content: '⏳ ليس دورك الآن.', ephemeral: true }); return true; }
+      await interaction.reply({ ...unoBuildHandView(game, interaction.user.id, messageId), ephemeral: true });
+      return true;
+    }
+
+    if (interaction.isButton() && customId.startsWith('uno_quit_')) {
+      const messageId = unoParseAfterPrefix(customId, 'uno_quit_');
+      const game = unoActiveGames.get(messageId);
+      if (!game || game.finished) { await interaction.reply({ content: '❌ لا توجد لعبة نشطة هنا.', ephemeral: true }); return true; }
+      if (!game.isParticipant(interaction.user.id)) { await interaction.reply({ content: '⛔ هذه ليست لعبتك!', ephemeral: true }); return true; }
+      game.abort('left', interaction.user.id);
+      await interaction.deferUpdate();
+      await unoUpdatePublicView(interaction.client, messageId, game);
+      unoCleanupGame(messageId);
+      return true;
+    }
+
+    if (interaction.isButton() && customId.startsWith('uno_draw_')) {
+      const messageId = unoParseAfterPrefix(customId, 'uno_draw_');
+      const game = unoActiveGames.get(messageId);
+      if (!game || game.finished) { await interaction.update({ content: '❌ لا توجد لعبة نشطة.', embeds: [], components: [] }); return true; }
+      if (!game.isParticipant(interaction.user.id) || interaction.user.id !== game.currentPlayerId) {
+        await unoSafeReplyEphemeral(interaction, '⛔ لا يمكنك التصرف الآن.');
+        return true;
+      }
+      game.drawCard(interaction.user.id);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
+      await unoUpdatePublicView(interaction.client, messageId, game);
+      unoScheduleTimeout(interaction.client, messageId);
+      return true;
+    }
+
+    if (interaction.isStringSelectMenu() && customId.startsWith('uno_play_')) {
+      const messageId = unoParseAfterPrefix(customId, 'uno_play_');
+      const game = unoActiveGames.get(messageId);
+      if (!game || game.finished) { await interaction.update({ content: '❌ لا توجد لعبة نشطة.', embeds: [], components: [] }); return true; }
+      if (!game.isParticipant(interaction.user.id) || interaction.user.id !== game.currentPlayerId) {
+        await unoSafeReplyEphemeral(interaction, '⛔ لا يمكنك التصرف الآن.');
+        return true;
+      }
+
+      const cardId = interaction.values[0];
+      const player = game.players[interaction.user.id];
+      const card = player.hand.find(c => c.id === cardId);
+      if (!card || !unoCardMatches(card, game.topCard, game.activeColor)) {
+        await unoSafeReplyEphemeral(interaction, '❌ هذه الورقة غير قابلة للعب الآن.');
+        return true;
+      }
+
+      if (card.isWild) {
+        unoPendingWild.set(`${messageId}:${interaction.user.id}`, cardId);
+        await interaction.update({ ...unoBuildColorPickerView(messageId, cardId), files: [] });
+        return true;
+      }
+
+      game.playCard(interaction.user.id, cardId, null);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
+      await unoUpdatePublicView(interaction.client, messageId, game);
+      if (game.finished) unoCleanupGame(messageId); else unoScheduleTimeout(interaction.client, messageId);
+      return true;
+    }
+
+    if (interaction.isButton() && customId.startsWith('uno_color_')) {
+      const rest = unoParseAfterPrefix(customId, 'uno_color_');
+      const parts = rest.split('_');
+      const messageId = parts[0];
+      const cardId = parts.slice(1, -1).join('_');
+      const color = parts[parts.length - 1];
+
+      const game = unoActiveGames.get(messageId);
+      if (!game || game.finished) { await interaction.update({ content: '❌ لا توجد لعبة نشطة.', embeds: [], components: [] }); return true; }
+      if (!game.isParticipant(interaction.user.id) || interaction.user.id !== game.currentPlayerId) {
+        await unoSafeReplyEphemeral(interaction, '⛔ لا يمكنك التصرف الآن.');
+        return true;
+      }
+
+      unoPendingWild.delete(`${messageId}:${interaction.user.id}`);
+      game.playCard(interaction.user.id, cardId, color);
+      await interaction.deferUpdate();
+      await interaction.deleteReply().catch(() => {});
+      await unoUpdatePublicView(interaction.client, messageId, game);
+      if (game.finished) unoCleanupGame(messageId); else unoScheduleTimeout(interaction.client, messageId);
+      return true;
+    }
+
+    return false;
+  } catch (err) {
+    console.error('❌ خطأ في وحدة UNO:', err);
+    await unoSafeReplyEphemeral(interaction, '⚠️ حدث خطأ غير متوقع في اللعبة.');
+    return true;
+  }
+}
+// =====================================================================
+// ========================= نهاية قسم UNO =========================
+// =====================================================================
 
 client.login(TOKEN);

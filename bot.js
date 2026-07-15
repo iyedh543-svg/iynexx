@@ -8,6 +8,11 @@ const {
 const money = require('./Money');
 const { randomUUID } = require('crypto');
 
+// =================== إضافة: وحدة الشكوبة التونسية ===================
+// وحدة مستقلة بالكامل، لا تغيّر أي شيء في الكود الحالي أدناه.
+const chkobba = require('./chkobba');
+// =======================================================================
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -229,6 +234,10 @@ client.once('ready', async () => {
       inviteCache.set(guild.id, map);
     } catch {}
   }
+
+  // =================== إضافة: تسجيل أمر /chkobba ===================
+  await chkobba.registerCommands(client);
+  // ===================================================================
 });
 
 // =================== إشعار اللفل أب ===================
@@ -727,6 +736,7 @@ client.on('messageCreate', async (message) => {
         { name: '➖ `/-$:@شخص مبلغ`',        value: 'سحب مال (أدمن/قائد)' },
         { name: '🛒 `/TR:"عنوان"-DS:"وصف"-IMG:"رابط"-SM:"سعر"(حسابات)`',
           value: 'إنشاء منتج — (أدمن/قائد)\nمثال: `(name:01/psw:123,name:02/psw:456)`' },
+        { name: '🃏 `/chkobba`',              value: 'ابدأ لعبة شكوبة تونسية (Slash Command) مع لاعب آخر — للجميع' },
       );
     await message.channel.send({ embeds: [embed] });
     await message.delete().catch(() => {});
@@ -735,6 +745,12 @@ client.on('messageCreate', async (message) => {
 
 // =================== التفاعلات ===================
 client.on('interactionCreate', async (interaction) => {
+
+  // =================== إضافة: تفويض تفاعلات الشكوبة أولاً ===================
+  // إن كان التفاعل يخص لعبة الشكوبة، تتم معالجته بالكامل هنا وتتوقف
+  // الدالة عند هذا الحد، بدون أي تأثير على بقية الأزرار/القوائم أدناه.
+  if (await chkobba.handleInteraction(interaction)) return;
+  // ============================================================================
 
   // ── زر slot_start ──
   if (interaction.isButton() && interaction.customId.startsWith('slot_start_')) {

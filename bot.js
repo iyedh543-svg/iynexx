@@ -227,10 +227,10 @@ function scheduleNextGG() {
 const CHKOBBA_SUITS = ['denari', 'coppe', 'spade', 'bastoni'];
 
 const CHKOBBA_SUIT_LABELS_AR = {
-  denari: 'ديناري',
-  coppe: 'كوبة',
-  spade: 'سباطي',
-  bastoni: 'بستوني',
+  denari: '',
+  coppe: '',
+  spade: '',
+  bastoni: '',
 };
 
 const CHKOBBA_SUIT_EMOJI = {

@@ -9,6 +9,7 @@ const {
 const money = require('./Money');
 const { randomUUID } = require('crypto');
 const path = require('path');
+const Jimp = require('jimp');
 
 const client = new Client({
   intents: [
@@ -539,6 +540,54 @@ function chkobbaCardAttachment(card) {
   return new AttachmentBuilder(filePath, { name: card.imageName });
 }
 
+// ---------- دمج صور عدة بطاقات في صورة واحدة مع اسم كل بطاقة تحتها ----------
+const CHKOBBA_IMG_CARD_WIDTH   = 140; // عرض كل بطاقة داخل الصورة المدمجة
+const CHKOBBA_IMG_GAP          = 14;  // مسافة بين البطاقات
+const CHKOBBA_IMG_LABEL_HEIGHT = 34;  // ارتفاع مكان كتابة الاسم تحت كل بطاقة
+const CHKOBBA_IMG_PADDING      = 16;  // حواف الصورة
+const CHKOBBA_IMG_BG_COLOR     = 0x2c3e50ff;
+
+async function chkobbaComposeCardsImage(cards) {
+  if (!cards || cards.length === 0) return null;
+
+  const loaded = [];
+  for (const card of cards) {
+    const filePath = path.join(__dirname, card.imageName);
+    const img = await Jimp.read(filePath);
+    img.resize(CHKOBBA_IMG_CARD_WIDTH, Jimp.AUTO);
+    loaded.push({ card, img });
+  }
+
+  const cardHeight   = Math.max(...loaded.map(l => l.img.bitmap.height));
+  const cellWidth    = CHKOBBA_IMG_CARD_WIDTH + CHKOBBA_IMG_GAP;
+  const canvasWidth  = cellWidth * loaded.length + CHKOBBA_IMG_GAP;
+  const canvasHeight = CHKOBBA_IMG_PADDING * 2 + cardHeight + CHKOBBA_IMG_LABEL_HEIGHT;
+
+  const canvas = await new Jimp(canvasWidth, canvasHeight, CHKOBBA_IMG_BG_COLOR);
+  const font   = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+
+  for (let i = 0; i < loaded.length; i++) {
+    const { card, img } = loaded[i];
+    const x = CHKOBBA_IMG_GAP + i * cellWidth;
+    const y = CHKOBBA_IMG_PADDING;
+    canvas.composite(img, x, y);
+    canvas.print(
+      font,
+      x - 10,
+      y + cardHeight + 4,
+      {
+        text: card.shortLabel,
+        alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+        alignmentY: Jimp.VERTICAL_ALIGN_TOP,
+      },
+      CHKOBBA_IMG_CARD_WIDTH + 20,
+      CHKOBBA_IMG_LABEL_HEIGHT
+    );
+  }
+
+  return canvas.getBufferAsync(Jimp.MIME_PNG);
+}
+
 function chkobbaBuildLobbyEmbed(hostId) {
   return new EmbedBuilder()
     .setColor(0x1abc9c)
@@ -560,8 +609,7 @@ function chkobbaBuildJoinRow(hostId) {
   return new ActionRowBuilder().addComponents(btn);
 }
 
-function chkobbaBuildPublicGameView(game, messageId) {
-  const embeds = [];
+async function chkobbaBuildPublicGameView(game, messageId) {
   const files = [];
   const p1 = game.order[0];
   const p2 = game.order[1];
@@ -592,17 +640,14 @@ function chkobbaBuildPublicGameView(game, messageId) {
     .setTimestamp();
 
   if (game.log.length > 0) main.addFields({ name: '📜 آخر الأحداث', value: game.log.slice(-4).join('\n') });
-  embeds.push(main);
 
-  for (const card of game.table.slice(0, 8)) {
-    const att = chkobbaCardAttachment(card);
-    files.push(att);
-    embeds.push(
-      new EmbedBuilder()
-        .setColor(0x1abc9c)
-        .setTitle(`${CHKOBBA_SUIT_EMOJI[card.suit]} ${card.shortLabel}`)
-        .setThumbnail(`attachment://${card.imageName}`)
-    );
+  // صورة واحدة تجمع كل بطاقات الطاولة مع اسم كل بطاقة تحتها
+  if (game.table.length > 0) {
+    const buffer = await chkobbaComposeCardsImage(game.table);
+    if (buffer) {
+      files.push(new AttachmentBuilder(buffer, { name: 'chkobba_table.png' }));
+      main.setImage('attachment://chkobba_table.png');
+    }
   }
 
   const row = new ActionRowBuilder().addComponents(
@@ -610,43 +655,40 @@ function chkobbaBuildPublicGameView(game, messageId) {
     new ButtonBuilder().setCustomId(`chkobba_quit_${messageId}`).setLabel('🚪 الانسحاب من اللعبة').setStyle(ButtonStyle.Danger)
   );
 
-  return { embeds, files, components: [row] };
+  return { embeds: [main], files, components: [row] };
 }
 
-function chkobbaBuildHandView(game, playerId, messageId) {
+async function chkobbaBuildHandView(game, playerId, messageId) {
   const player = game.players[playerId];
-  const embeds = [];
   const files = [];
 
-  embeds.push(
-    new EmbedBuilder()
-      .setColor(0x3498db)
-      .setTitle('🃏 يدك الحالية')
-      .setDescription('اختر ورقة من القائمة أدناه للعبها:')
-      .setFooter({ text: 'هذه الرسالة تظهر لك فقط' })
-  );
+  const embed = new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle('🃏 يدك الحالية')
+    .setDescription('اضغط على الزر المطابق للورقة التي تريد لعبها 👇')
+    .setFooter({ text: 'هذه الرسالة تظهر لك فقط' });
 
-  for (const card of player.hand) {
-    const att = chkobbaCardAttachment(card);
-    files.push(att);
-    embeds.push(
-      new EmbedBuilder()
-        .setColor(0x1abc9c)
-        .setTitle(`${CHKOBBA_SUIT_EMOJI[card.suit]} ${card.shortLabel}`)
-        .setThumbnail(`attachment://${card.imageName}`)
-    );
+  // صورة واحدة تجمع كل بطاقات يدك مع اسم كل بطاقة تحتها
+  if (player.hand.length > 0) {
+    const buffer = await chkobbaComposeCardsImage(player.hand);
+    if (buffer) {
+      files.push(new AttachmentBuilder(buffer, { name: 'chkobba_hand.png' }));
+      embed.setImage('attachment://chkobba_hand.png');
+    }
   }
 
-  const options = player.hand.map(card =>
-    new StringSelectMenuOptionBuilder().setLabel(card.label).setValue(card.id).setEmoji(CHKOBBA_SUIT_EMOJI[card.suit])
+  // زر لكل بطاقة — الضغط عليه يختارها مباشرة (بدل قائمة منسدلة)
+  const buttons = player.hand.map(card =>
+    new ButtonBuilder()
+      .setCustomId(`chkobba_play_${messageId}_${card.id}`)
+      .setLabel(card.shortLabel)
+      .setEmoji(CHKOBBA_SUIT_EMOJI[card.suit])
+      .setStyle(ButtonStyle.Primary)
   );
 
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(`chkobba_play_${messageId}`)
-    .setPlaceholder('🎴 اختر ورقة لتلعبها')
-    .addOptions(options);
+  const rows = chunk(buttons, 5).map(group => new ActionRowBuilder().addComponents(group));
 
-  return { embeds, files, components: [new ActionRowBuilder().addComponents(select)] };
+  return { embeds: [embed], files, components: rows };
 }
 
 function chkobbaBuildComboSelect(messageId, cardId, options) {
@@ -749,7 +791,7 @@ async function chkobbaUpdatePublicView(discordClient, messageId, game) {
         await message.edit({ embeds: [chkobbaBuildFinalResultEmbed(game)], components: [], files: [] });
       }
     } else {
-      const view = chkobbaBuildPublicGameView(game, messageId);
+      const view = await chkobbaBuildPublicGameView(game, messageId);
       await message.edit(view);
     }
   } catch (err) {
@@ -838,7 +880,7 @@ async function chkobbaHandleInteraction(interaction) {
       const game = chkobbaManager.startGame(messageId, hostId, interaction.user.id);
       chkobbaGameChannels.set(messageId, interaction.channelId);
 
-      const view = chkobbaBuildPublicGameView(game, messageId);
+      const view = await chkobbaBuildPublicGameView(game, messageId);
       await interaction.update(view);
       chkobbaScheduleTimeout(interaction.client, messageId);
       return true;
@@ -862,7 +904,7 @@ async function chkobbaHandleInteraction(interaction) {
         return true;
       }
 
-      const view = chkobbaBuildHandView(game, interaction.user.id, messageId);
+      const view = await chkobbaBuildHandView(game, interaction.user.id, messageId);
       await interaction.reply({ ...view, ephemeral: true });
       return true;
     }
@@ -888,13 +930,17 @@ async function chkobbaHandleInteraction(interaction) {
       return true;
     }
 
-    // ── قائمة اختيار الورقة للعب ──
-    if (interaction.isStringSelectMenu() && customId.startsWith('chkobba_play_')) {
-      const messageId = chkobbaParseAfterPrefix(customId, 'chkobba_play_');
+    // ── أزرار اختيار البطاقة للعب (كل بطاقة زر منفصل) ──
+    if (interaction.isButton() && customId.startsWith('chkobba_play_')) {
+      const rest = chkobbaParseAfterPrefix(customId, 'chkobba_play_');
+      const sepIdx = rest.indexOf('_');
+      const messageId = rest.slice(0, sepIdx);
+      const cardId = rest.slice(sepIdx + 1);
+
       const game = chkobbaManager.getGame(messageId);
 
       if (!game || game.finished) {
-        await interaction.update({ content: '❌ لا توجد لعبة نشطة.', embeds: [], components: [] });
+        await interaction.update({ content: '❌ لا توجد لعبة نشطة.', embeds: [], components: [], files: [] });
         return true;
       }
       if (!game.isParticipant(interaction.user.id) || interaction.user.id !== game.currentPlayerId) {
@@ -902,10 +948,9 @@ async function chkobbaHandleInteraction(interaction) {
         return true;
       }
 
-      const cardId = interaction.values[0];
       const preview = game.previewCaptureOptions(cardId);
       if (!preview) {
-        await interaction.update({ content: '❌ ورقة غير صالحة.', embeds: [], components: [] });
+        await interaction.update({ content: '❌ ورقة غير صالحة.', embeds: [], components: [], files: [] });
         return true;
       }
 

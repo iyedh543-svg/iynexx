@@ -226,12 +226,8 @@ function scheduleNextGG() {
 // ---------- تعريف الورقة والرزمة ----------
 const CHKOBBA_SUITS = ['denari', 'coppe', 'spade', 'bastoni'];
 
-const CHKOBBA_SUIT_LABELS_AR = {
-  denari: '',
-  coppe: '',
-  spade: '',
-  bastoni: '',
-};
+
+
 
 const CHKOBBA_SUIT_EMOJI = {
   denari: '🟡',

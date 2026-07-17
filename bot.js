@@ -226,14 +226,18 @@ function scheduleNextGG() {
 //
 // تحديثات في هذه النسخة:
 //  1) تصحيح تسمية القيمتين 8 و 9 (كانتا مقلوبتين).
-//  2) يدك تتبعث لك تلقائياً في الخاص (DM) في بداية دورك — بلا ما تحتاج
-//     تضغط على الزر — والزر يبقى موجود كبديل احتياطي.
+//  2) يدك الحقيقية تشوفها بضغطة وحدة على زر "عرض يدي واللعب" — تجيك
+//     رسالة *خاصة بيك بس* (ephemeral) فيها بطاقاتك الحقيقية وأزرار
+//     تختار منها. خصمك ما يشوفهاش خالص. بلا رسائل خاصة (DM) نهائياً —
+//     ديسكورد أصلاً ما يسمحش نبعثو ephemeral بلا ضغطة من صاحبها.
 //  3) كل صورة (يد/طاولة) تتولد باسم ملف فريد في كل مرة، باش نتفادى أي
 //     تضارب/كاش في الصور بين اللاعبين.
 //  4) دعم حقيقي للعب بـ 1 (ضد بوت 🤖) أو 2 أو 3 أو 4 لاعبين — وفي وضع
 //     الـ 4 لاعبين اللعب يكون فرق (2 ضد 2، كل لاعب مع الي في مقابلو).
 //  5) اللوحة العامة توري يد كل لاعب مقلوبة (ضهر البطاقة فقط) باش يشوف
 //     الجميع كم ورقة عند كل واحد، بلا ما تنكشف قيمها لحتى حد.
+//  6) لما تنتهي اللعبة، نفس الرسالة تتبدّل بالكامل لتوري النتيجة النهائية
+//     فقط (بلا أزرار ولا صور قديمة).
 
 // ---------- تعريف الورقة والرزمة ----------
 const CHKOBBA_SUITS = ['denari', 'coppe', 'spade', 'bastoni'];
@@ -987,20 +991,6 @@ async function chkobbaSafeReplyEphemeral(interaction, content) {
   }
 }
 
-// يبعث ليد اللاعب الحالي رسالة خاصة (DM) تلقائياً — بلا ما يحتاج يضغط الزر.
-// الزر يبقى موجود كبديل احتياطي إذا كانت الرسائل الخاصة مغلقة عندو.
-async function chkobbaSendHandDmForCurrentTurn(discordClient, messageId, game) {
-  const pid = game.currentPlayerId;
-  if (pid === CHKOBBA_AI_ID) return;
-  try {
-    const user = await discordClient.users.fetch(pid);
-    const view = await chkobbaBuildHandView(game, pid, messageId);
-    await user.send({ content: '🀄 **دورك الآن في الشكوبة!** هذي يدك:', ...view });
-  } catch {
-    // رسائله الخاصة مغلقة أو صار خطأ — يقدر دائماً يستعمل زر "عرض يدي واللعب"
-  }
-}
-
 // يشغّل دور البوت تلقائياً إذا كان الدور الحالي لو (وضع اللاعب الواحد)
 async function chkobbaMaybePlayAiTurn(discordClient, messageId) {
   const game = chkobbaManager.getGame(messageId);
@@ -1017,8 +1007,8 @@ async function chkobbaMaybePlayAiTurn(discordClient, messageId) {
   await chkobbaAfterStateChange(discordClient, messageId, freshGame);
 }
 
-// نقطة مركزية تُستدعى بعد أي حركة: تحدّث اللوحة العامة، وتشغّل دور البوت
-// إذا لزم، وتبعث يد الدور القادم تلقائياً في الخاص.
+// نقطة مركزية تُستدعى بعد أي حركة: تحدّث اللوحة العامة (ضهر بطاقات فقط
+// للجميع + زر "عرض يدي واللعب")، وتشغّل دور البوت تلقائياً إذا لزم.
 async function chkobbaAfterStateChange(discordClient, messageId, game) {
   await chkobbaUpdatePublicView(discordClient, messageId, game);
 
@@ -1031,8 +1021,6 @@ async function chkobbaAfterStateChange(discordClient, messageId, game) {
 
   if (game.currentPlayerId === CHKOBBA_AI_ID) {
     chkobbaMaybePlayAiTurn(discordClient, messageId);
-  } else {
-    await chkobbaSendHandDmForCurrentTurn(discordClient, messageId, game);
   }
 }
 
@@ -1074,10 +1062,9 @@ async function chkobbaHandleInteraction(interaction) {
         const msg = await interaction.fetchReply();
         chkobbaGameChannels.set(msg.id, interaction.channelId);
         const game = chkobbaManager.startGame(msg.id, [hostId, CHKOBBA_AI_ID]);
+        chkobbaScheduleTimeout(interaction.client, msg.id);
         const view = await chkobbaBuildPublicGameView(game, msg.id);
         await interaction.editReply({ content: null, ...view });
-        chkobbaScheduleTimeout(interaction.client, msg.id);
-        await chkobbaSendHandDmForCurrentTurn(interaction.client, msg.id, game);
         return true;
       }
 
@@ -1118,14 +1105,13 @@ async function chkobbaHandleInteraction(interaction) {
       // اكتمل عدد اللاعبين — ابدأ اللعبة
       chkobbaManager.removeLobby(messageId);
       const game = chkobbaManager.startGame(messageId, lobby.joined);
+      chkobbaScheduleTimeout(interaction.client, messageId);
       const view = await chkobbaBuildPublicGameView(game, messageId);
       await interaction.update(view);
-      chkobbaScheduleTimeout(interaction.client, messageId);
-      await chkobbaSendHandDmForCurrentTurn(interaction.client, messageId, game);
       return true;
     }
 
-    // ── زر "عرض يدي واللعب" (بديل احتياطي بجانب إرسال اليد التلقائي بالخاص) ──
+    // ── زر "عرض يدي واللعب" ──
     if (interaction.isButton() && customId.startsWith('chkobba_hand_')) {
       const messageId = chkobbaParseAfterPrefix(customId, 'chkobba_hand_');
       const game = chkobbaManager.getGame(messageId);

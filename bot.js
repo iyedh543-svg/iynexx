@@ -610,6 +610,7 @@ const chkobbaManager = new ChkobbaGameManager();
 const chkobbaGameChannels = new Map();  // messageId -> channelId
 const chkobbaTurnTimers   = new Map();  // messageId -> Timeout
 const chkobbaPendingCombos = new Map(); // `${messageId}:${userId}` -> {cardId, options}
+const chkobbaPlayerThreads = new Map(); // `${messageId}:${userId}` -> { channelId, msgId }
 const CHKOBBA_COMMAND_NAME = 'chkobba';
 
 // ---------- بناء الواجهات (Embeds/Buttons/Select Menus) ----------
@@ -624,6 +625,33 @@ const CHKOBBA_IMG_GAP          = 14;  // مسافة بين البطاقات
 const CHKOBBA_IMG_LABEL_HEIGHT = 34;  // ارتفاع مكان كتابة الاسم تحت كل بطاقة
 const CHKOBBA_IMG_PADDING      = 16;  // حواف الصورة
 const CHKOBBA_IMG_BG_COLOR     = 0x2c3e50ff;
+
+// اسم ملف صورة "ضهر البطاقة" — لازم يكون بجانب bot.js في نفس مجلد بقية صور الأوراق
+const CHKOBBA_CARD_BACK_FILE = 'chkobba_card_back.jpg';
+
+// يركّب صورة فيها n بطاقة مقلوبة (ضهرها ظاهر فقط) — تُستعمل باش نوري
+// عدد الأوراق إلي عند كل لاعب بلا ما نكشف قيمتها.
+async function chkobbaComposeBackCardsImage(count) {
+  if (!count || count <= 0) return null;
+
+  const backPath = path.join(__dirname, CHKOBBA_CARD_BACK_FILE);
+  const backImg  = await Jimp.read(backPath);
+  backImg.resize(CHKOBBA_IMG_CARD_WIDTH, Jimp.AUTO);
+
+  const cardHeight   = backImg.bitmap.height;
+  const cellWidth    = CHKOBBA_IMG_CARD_WIDTH + CHKOBBA_IMG_GAP;
+  const canvasWidth  = cellWidth * count + CHKOBBA_IMG_GAP;
+  const canvasHeight = CHKOBBA_IMG_PADDING * 2 + cardHeight;
+
+  const canvas = await new Jimp(canvasWidth, canvasHeight, CHKOBBA_IMG_BG_COLOR);
+  for (let i = 0; i < count; i++) {
+    const x = CHKOBBA_IMG_GAP + i * cellWidth;
+    const y = CHKOBBA_IMG_PADDING;
+    canvas.composite(backImg, x, y);
+  }
+
+  return canvas.getBufferAsync(Jimp.MIME_PNG);
+}
 
 async function chkobbaComposeCardsImage(cards) {
   if (!cards || cards.length === 0) return null;
@@ -716,7 +744,7 @@ function chkobbaBuildJoinRow(messageId) {
   return new ActionRowBuilder().addComponents(btn);
 }
 
-async function chkobbaBuildPublicGameView(game, messageId) {
+async function chkobbaBuildPublicGameView(game, messageId, threadFallbackForIds = []) {
   const files = [];
 
   const scoreLines = game.order.map(pid => {
@@ -755,12 +783,53 @@ async function chkobbaBuildPublicGameView(game, messageId) {
     }
   }
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`chkobba_hand_${messageId}`).setLabel('🃏 عرض يدي واللعب').setStyle(ButtonStyle.Primary),
+  // ── أيادي اللاعبين مقلوبة (ضهر البطاقة) ──
+  // كل لاعب عندو Embed صغير يوري عدد الأوراق إلي بيدو، بصورة "ضهر البطاقة"
+  // فقط — بلا ما تنكشف قيمها لأي حد. هكا يشوف الجميع كم ورقة عند كل واحد.
+  const embeds = [main];
+  for (const pid of game.order) {
+    const s = game.players[pid];
+    if (s.hand.length === 0) continue;
+
+    const backBuffer = await chkobbaComposeBackCardsImage(s.hand.length);
+    if (!backBuffer) continue;
+
+    const backFileName = chkobbaUniqueFileName(`chkobba_backhand_${pid}`);
+    files.push(new AttachmentBuilder(backBuffer, { name: backFileName }));
+
+    let teamTag = '';
+    if (game.teams) teamTag = game.teams.A.includes(pid) ? ' [فريق A]' : ' [فريق B]';
+
+    embeds.push(new EmbedBuilder()
+      .setColor(0x2c3e50)
+      .setDescription(`🂠 يد ${chkobbaMention(pid)}${teamTag} — **${s.hand.length}** أوراق`)
+      .setImage(`attachment://${backFileName}`));
+  }
+
+  const rowButtons = [];
+  if (threadFallbackForIds.length > 0) {
+    rowButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`chkobba_hand_${messageId}`)
+        .setLabel('🃏 عرض يدي واللعب (احتياطي)')
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+  rowButtons.push(
     new ButtonBuilder().setCustomId(`chkobba_quit_${messageId}`).setLabel('🚪 الانسحاب من اللعبة').setStyle(ButtonStyle.Danger)
   );
+  const row = new ActionRowBuilder().addComponents(rowButtons);
 
-  return { embeds: [main], files, components: [row] };
+  if (threadFallbackForIds.length > 0) {
+    main.addFields({
+      name: '⚠️ تنبيه',
+      value: `تعذّر فتح غرفة خاصة لـ ${threadFallbackForIds.map(pid => chkobbaMention(pid)).join('، ')} — يستعمل الزر الاحتياطي تحت.`,
+    });
+  } else {
+    main.addFields({ name: 'ℹ️ يدك', value: 'شوف غرفتك الخاصة (Thread) اللي فتحلك البوت — يدك ظاهرة فيها طول اللعبة.' });
+  }
+
+  return { embeds, files, components: [row] };
 }
 
 async function chkobbaBuildHandView(game, playerId, messageId) {
@@ -889,7 +958,7 @@ async function chkobbaFetchPublicMessage(discordClient, messageId) {
   } catch { return null; }
 }
 
-async function chkobbaUpdatePublicView(discordClient, messageId, game) {
+async function chkobbaUpdatePublicView(discordClient, messageId, game, threadFallbackForIds = []) {
   const message = await chkobbaFetchPublicMessage(discordClient, messageId);
   if (!message) return;
   try {
@@ -900,7 +969,7 @@ async function chkobbaUpdatePublicView(discordClient, messageId, game) {
         await message.edit({ embeds: [chkobbaBuildFinalResultEmbed(game)], components: [], files: [] });
       }
     } else {
-      const view = await chkobbaBuildPublicGameView(game, messageId);
+      const view = await chkobbaBuildPublicGameView(game, messageId, threadFallbackForIds);
       await message.edit(view);
     }
   } catch (err) {
@@ -922,6 +991,7 @@ function chkobbaScheduleTimeout(discordClient, messageId) {
     if (!game.isTimedOut()) return;
     game.abort('timeout');
     await chkobbaUpdatePublicView(discordClient, messageId, game);
+    await chkobbaCloseAllPlayerThreads(discordClient, messageId, game);
     chkobbaCleanupGame(messageId);
   }, CHKOBBA_TURN_TIMEOUT_MS + 500);
   chkobbaTurnTimers.set(messageId, timer);
@@ -934,6 +1004,9 @@ function chkobbaCleanupGame(messageId) {
   for (const key of [...chkobbaPendingCombos.keys()]) {
     if (key.startsWith(`${messageId}:`)) chkobbaPendingCombos.delete(key);
   }
+  for (const key of [...chkobbaPlayerThreads.keys()]) {
+    if (key.startsWith(`${messageId}:`)) chkobbaPlayerThreads.delete(key);
+  }
 }
 
 async function chkobbaSafeReplyEphemeral(interaction, content) {
@@ -943,6 +1016,71 @@ async function chkobbaSafeReplyEphemeral(interaction, content) {
     else await interaction.reply(payload);
   } catch (err) {
     console.error('❌ فشل رد سرّي في الشكوبة:', err.message);
+  }
+}
+
+// ينشئ (أول مرة) أو يحدّث (المرات إلي بعدها) غرفة خاصة (Private Thread)
+// للاعب معيّن — تبقى مفتوحة طول اللعبة، وتتحدّث فيها يده الحقيقية وأزرار
+// اللعب تلقائياً في كل مرة، بلا ما يحتاج يضغط أي شيء باش يفتحها. خصمو
+// ما ينضمش لهذا الثريد، فما يقدرش يشوف بطاقاتو.
+async function chkobbaEnsurePlayerThreadView(discordClient, messageId, game, pid) {
+  if (pid === CHKOBBA_AI_ID) return true;
+  const key = `${messageId}:${pid}`;
+  const view = await chkobbaBuildHandView(game, pid, messageId);
+
+  const existing = chkobbaPlayerThreads.get(key);
+  if (existing) {
+    try {
+      const thread = await discordClient.channels.fetch(existing.channelId);
+      const msg = await thread.messages.fetch(existing.msgId);
+      await msg.edit(view);
+      return true;
+    } catch {
+      chkobbaPlayerThreads.delete(key); // الثريد انمحى أو صار خطأ — نعاود ننشئوه تحت
+    }
+  }
+
+  try {
+    const parentChannelId = chkobbaGameChannels.get(messageId);
+    const parentChannel = await discordClient.channels.fetch(parentChannelId);
+    const user = await discordClient.users.fetch(pid);
+    const thread = await parentChannel.threads.create({
+      name: `🃏-يد-${user.username}`.slice(0, 90),
+      type: ChannelType.PrivateThread,
+      invitable: false,
+      autoArchiveDuration: 60,
+      reason: 'غرفة خاصة ليد لاعب في الشكوبة',
+    });
+    await thread.members.add(pid).catch(() => {});
+    const msg = await thread.send({ content: '🀄 هذي غرفتك الخاصة — يدك تبقى ظاهرة هنا طول اللعبة، اختار مباشرة من الأزرار:', ...view });
+    chkobbaPlayerThreads.set(key, { channelId: thread.id, msgId: msg.id });
+    return true;
+  } catch (err) {
+    console.error('❌ فشل فتح ثريد خاص للاعب في الشكوبة:', err.message);
+    return false;
+  }
+}
+
+async function chkobbaSyncAllPlayerThreads(discordClient, messageId, game) {
+  const failedIds = [];
+  for (const pid of game.order) {
+    if (pid === CHKOBBA_AI_ID) continue;
+    const ok = await chkobbaEnsurePlayerThreadView(discordClient, messageId, game, pid);
+    if (!ok) failedIds.push(pid);
+  }
+  return failedIds;
+}
+
+async function chkobbaCloseAllPlayerThreads(discordClient, messageId, game) {
+  for (const pid of game.order) {
+    const key = `${messageId}:${pid}`;
+    const ref = chkobbaPlayerThreads.get(key);
+    if (!ref) continue;
+    try {
+      const thread = await discordClient.channels.fetch(ref.channelId);
+      await thread.send('🏁 انتهت اللعبة — رجع للرسالة الرئيسية باش تشوف النتيجة.').catch(() => {});
+      await thread.setArchived(true).catch(() => {});
+    } catch {}
   }
 }
 
@@ -962,21 +1100,49 @@ async function chkobbaMaybePlayAiTurn(discordClient, messageId) {
   await chkobbaAfterStateChange(discordClient, messageId, freshGame);
 }
 
-// نقطة مركزية تُستدعى بعد أي حركة: تحدّث اللوحة العامة، وتشغّل دور البوت
-// تلقائياً إذا لزم.
+// نقطة مركزية تُستدعى بعد أي حركة: تحدّث غرفة كل لاعب الخاصة بيده الحقيقية
+// الجديدة (تلقائياً، بلا ضغط)، تحدّث اللوحة العامة (ضهر بطاقات بس)، وتشغّل
+// دور البوت تلقائياً إذا لزم.
 async function chkobbaAfterStateChange(discordClient, messageId, game) {
-  await chkobbaUpdatePublicView(discordClient, messageId, game);
-
   if (game.finished) {
+    await chkobbaUpdatePublicView(discordClient, messageId, game);
+    await chkobbaCloseAllPlayerThreads(discordClient, messageId, game);
     chkobbaCleanupGame(messageId);
     return;
   }
 
   chkobbaScheduleTimeout(discordClient, messageId);
 
+  const failedIds = await chkobbaSyncAllPlayerThreads(discordClient, messageId, game);
+  await chkobbaUpdatePublicView(discordClient, messageId, game, failedIds);
+
   if (game.currentPlayerId === CHKOBBA_AI_ID) {
     chkobbaMaybePlayAiTurn(discordClient, messageId);
   }
+}
+
+// يتحقق قبل بداية اللعبة إذا كانت القناة تدعم فتح غرف خاصة (Threads) —
+// شات الفويس مثلاً ما يدعمهاش، وهذا كان سبب فشل فتح الغرفة الخاصة سابقاً.
+function chkobbaCheckThreadSupport(channel, botMember) {
+  if (!channel || typeof channel.threads?.create !== 'function') {
+    return { ok: false, reason: 'not_text_channel' };
+  }
+  const perms = channel.permissionsFor(botMember);
+  if (!perms) return { ok: false, reason: 'unknown' };
+  if (!perms.has(PermissionFlagsBits.CreatePrivateThreads) || !perms.has(PermissionFlagsBits.SendMessagesInThreads)) {
+    return { ok: false, reason: 'missing_perm' };
+  }
+  return { ok: true };
+}
+
+function chkobbaThreadSupportErrorMessage(reason) {
+  if (reason === 'not_text_channel') {
+    return '⚠️ شغّل `/chkobba` جوه **قناة نصية عادية (Text Channel)** — مش داخل شات الفويس 🔊. شات الفويس ما يدعمش فتح "غرف خاصة" (Threads)، وهذا كان سبب المشكلة اللي شفتها. جرّب في أي قناة نصية عادية.';
+  }
+  if (reason === 'missing_perm') {
+    return '⚠️ البوت ماعندوش صلاحية "Create Private Threads" / "Send Messages in Threads" في هذه القناة. أعطي البوت هذي الصلاحيات (من إعدادات القناة أو رتبة البوت) وأعد المحاولة.';
+  }
+  return '⚠️ تعذّر التحقق من صلاحيات القناة، حاول في قناة نصية أخرى.';
 }
 
 // ---------- المعالج الرئيسي لتفاعلات الشكوبة ----------

@@ -1121,6 +1121,30 @@ async function chkobbaAfterStateChange(discordClient, messageId, game) {
   }
 }
 
+// يتحقق قبل بداية اللعبة إذا كانت القناة تدعم فتح غرف خاصة (Threads) —
+// شات الفويس مثلاً ما يدعمهاش، وهذا كان سبب فشل فتح الغرفة الخاصة سابقاً.
+function chkobbaCheckThreadSupport(channel, botMember) {
+  if (!channel || typeof channel.threads?.create !== 'function') {
+    return { ok: false, reason: 'not_text_channel' };
+  }
+  const perms = channel.permissionsFor(botMember);
+  if (!perms) return { ok: false, reason: 'unknown' };
+  if (!perms.has(PermissionFlagsBits.CreatePrivateThreads) || !perms.has(PermissionFlagsBits.SendMessagesInThreads)) {
+    return { ok: false, reason: 'missing_perm' };
+  }
+  return { ok: true };
+}
+
+function chkobbaThreadSupportErrorMessage(reason) {
+  if (reason === 'not_text_channel') {
+    return '⚠️ شغّل `/chkobba` جوه **قناة نصية عادية (Text Channel)** — مش داخل شات الفويس 🔊. شات الفويس ما يدعمش فتح "غرف خاصة" (Threads)، وهذا كان سبب المشكلة اللي شفتها. جرّب في أي قناة نصية عادية.';
+  }
+  if (reason === 'missing_perm') {
+    return '⚠️ البوت ماعندوش صلاحية "Create Private Threads" / "Send Messages in Threads" في هذه القناة. أعطي البوت هذي الصلاحيات (من إعدادات القناة أو رتبة البوت) وأعد المحاولة.';
+  }
+  return '⚠️ تعذّر التحقق من صلاحيات القناة، حاول في قناة نصية أخرى.';
+}
+
 // ---------- المعالج الرئيسي لتفاعلات الشكوبة ----------
 async function chkobbaHandleInteraction(interaction) {
   try {
@@ -1130,6 +1154,13 @@ async function chkobbaHandleInteraction(interaction) {
         await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة أو غرفة انتظار شكوبة جارية!', ephemeral: true });
         return true;
       }
+
+      const support = chkobbaCheckThreadSupport(interaction.channel, interaction.guild.members.me);
+      if (!support.ok) {
+        await interaction.reply({ content: chkobbaThreadSupportErrorMessage(support.reason), ephemeral: true });
+        return true;
+      }
+
       const hostId = interaction.user.id;
       await interaction.reply({ embeds: [chkobbaBuildCountSelectEmbed(hostId)], components: [chkobbaBuildCountSelectRow(hostId)] });
       return true;

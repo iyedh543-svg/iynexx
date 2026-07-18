@@ -3,7 +3,7 @@ const {
   ButtonBuilder, ButtonStyle, ActionRowBuilder,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   EmbedBuilder, PermissionFlagsBits,
-  AttachmentBuilder, SlashCommandBuilder
+  AttachmentBuilder, SlashCommandBuilder, ChannelType
 } = require('discord.js');
 
 const money = require('./Money');
@@ -222,15 +222,37 @@ function scheduleNextGG() {
 // أو دالة من الكود أعلاه. صور الأوراق يجب أن تكون في نفس مجلد bot.js
 // (الجذر)، بأسماء: denari_1.jpg ... denari_10.jpg، coppe_1.jpg ...
 // coppe_10.jpg، spade_1.jpg ... spade_10.jpg، bastoni_1.jpg ... bastoni_10.jpg
+// + صورة "ضهر البطاقة" بنفس المجلد باسم: chkobba_card_back.jpg
+//
+// تحديثات في هذه النسخة:
+//  1) تصحيح تسمية القيمتين 8 و 9 (كانتا مقلوبتين).
+//  2) كل لاعب يوصلو تلقائياً "ثريد خاص" (Private Thread) جوه نفس
+//     القناة، يفتحو البوت لوحدو مع اللاعب بلا ما يحتاج يضغط أي زر ولا
+//     رسالة خاصة (DM). فيه بطاقاته الحقيقية وأزرار يختار منها مباشرة،
+//     ويبقى مفتوح ومتحدّث تلقائياً طول اللعبة (كل ما يلعب هو أو خصمو
+//     تتبدّل الصورة/الأزرار وحدها). خصومو ما ينضموش لهذا الثريد، فما
+//     يقدروش يشوفو بطاقاتو أبداً — يشوفو غير ضهرها في اللوحة العامة.
+//     زر "عرض يدي" الاحتياطي (ephemeral) ما يظهرش إلا إذا تعذّر فتح
+//     الثريد الخاص لسبب تقني (صلاحيات/مستوى بوست السيرفر مثلاً).
+//  3) كل صورة (يد/طاولة) تتولد باسم ملف فريد في كل مرة، باش نتفادى أي
+//     تضارب/كاش في الصور بين اللاعبين.
+//  4) دعم حقيقي للعب بـ 1 (ضد بوت 🤖) أو 2 أو 3 أو 4 لاعبين — وفي وضع
+//     الـ 4 لاعبين اللعب يكون فرق (2 ضد 2، كل لاعب مع الي في مقابلو).
+//  5) اللوحة العامة (يشوفها الجميع) توري يد كل لاعب مقلوبة (ضهر
+//     البطاقة فقط) باش يشوف الجميع كم ورقة عند كل واحد، بلا ما تنكشف
+//     قيمها لحتى حد.
+//  6) لما تنتهي اللعبة، اللوحة العامة تتبدّل بالكامل لتوري النتيجة
+//     النهائية فقط (بلا أزرار ولا صور قديمة)، وثريدات اللاعبين تتقفل.
 
 // ---------- تعريف الورقة والرزمة ----------
 const CHKOBBA_SUITS = ['denari', 'coppe', 'spade', 'bastoni'];
 
+
 const CHKOBBA_SUIT_LABELS_AR = {
-  denari: 'ديناري',
-  coppe: 'كوبة',
-  spade: 'سباطي',
-  bastoni: 'بستوني',
+  denari: '',
+  coppe: '',
+  spade: '',
+  bastoni: '',
 };
 
 const CHKOBBA_SUIT_EMOJI = {
@@ -240,15 +262,27 @@ const CHKOBBA_SUIT_EMOJI = {
   bastoni: '🟢',
 };
 
+// ✅ تم تصحيح 8 و 9 (كانا مقلوبين)
 const CHKOBBA_VALUE_LABELS_AR = {
   1: 'الآس', 2: '2', 3: '3', 4: '4', 5: '5',
-  6: '6', 7: '7', 8: 'الفارس', 9: 'الحصان', 10: 'الملك',
+  6: '6', 7: '7', 8: 'الحصان', 9: 'الفارس', 10: 'الملك',
 };
 
 // نقاط البريمييرا الرسمية لكل قيمة (لحساب "البريم")
 const CHKOBBA_PRIMIERA_POINTS = {
   1: 16, 2: 12, 3: 13, 4: 14, 5: 15, 6: 18, 7: 21, 8: 10, 9: 10, 10: 10,
 };
+
+// معرّف وهمي للبوت (وضع اللاعب الواحد ضد الذكاء الاصطناعي)
+const CHKOBBA_AI_ID = 'chkobba_ai_bot';
+
+function chkobbaMention(pid) {
+  return pid === CHKOBBA_AI_ID ? '🤖 **البوت**' : `<@${pid}>`;
+}
+
+function chkobbaUniqueFileName(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+}
 
 class ChkobbaCard {
   constructor(suit, value) {
@@ -317,13 +351,18 @@ class ChkobbaPlayer {
   }
 }
 
+// اللعبة تدعم الآن 2 أو 3 أو 4 لاعبين (والوضع الفردي 1 يُلعب فعلياً كـ 2:
+// اللاعب + البوت). في حالة 4 لاعبين تُلعب فرق: order[0]+order[2] ضد order[1]+order[3].
 class ChkobbaGame {
-  constructor(player1Id, player2Id) {
-    this.players = {
-      [player1Id]: new ChkobbaPlayer(player1Id),
-      [player2Id]: new ChkobbaPlayer(player2Id),
-    };
-    this.order = [player1Id, player2Id];
+  constructor(playerIds) {
+    this.order = playerIds.slice();
+    this.players = {};
+    for (const pid of this.order) this.players[pid] = new ChkobbaPlayer(pid);
+
+    this.teams = this.order.length === 4
+      ? { A: [this.order[0], this.order[2]], B: [this.order[1], this.order[3]] }
+      : null;
+
     this.turnIndex = 0;
     this.table = [];
     this.deck = [];
@@ -351,7 +390,6 @@ class ChkobbaGame {
   }
 
   get currentPlayerId() { return this.order[this.turnIndex]; }
-  get opponentId() { return this.order[1 - this.turnIndex]; }
   isParticipant(userId) { return Object.prototype.hasOwnProperty.call(this.players, userId); }
 
   _cardsRemainingTotal() {
@@ -406,37 +444,37 @@ class ChkobbaGame {
   _logEvent({ playerId, playedCard, captured, isScopa }) {
     let text;
     if (captured.length > 0) {
-      text = `<@${playerId}> لعب **${playedCard.shortLabel}** وأخذ: ${captured.map(c => c.shortLabel).join('، ')}`;
+      text = `${chkobbaMention(playerId)} لعب **${playedCard.shortLabel}** وأخذ: ${captured.map(c => c.shortLabel).join('، ')}`;
       if (isScopa) text += ' — 🏆 **شكوبة!**';
     } else {
-      text = `<@${playerId}> لعب **${playedCard.shortLabel}** ووضعها على الطاولة`;
+      text = `${chkobbaMention(playerId)} لعب **${playedCard.shortLabel}** ووضعها على الطاولة`;
     }
     this.log.push(text);
     if (this.log.length > 6) this.log.shift();
   }
 
   _advanceAfterPlay() {
-    const bothHandsEmpty = this.order.every(pid => this.players[pid].hand.length === 0);
-    if (bothHandsEmpty) {
+    const allHandsEmpty = this.order.every(pid => this.players[pid].hand.length === 0);
+    if (allHandsEmpty) {
       if (this.deck.length > 0) {
         this._dealHands();
       } else {
         if (this.table.length > 0 && this.lastCapturerId) {
           this.players[this.lastCapturerId].captured.push(...this.table);
-          this.log.push(`📥 أوراق الطاولة المتبقية ذهبت لـ <@${this.lastCapturerId}> (قاعدة آخر أخذة)`);
+          this.log.push(`📥 أوراق الطاولة المتبقية ذهبت لـ ${chkobbaMention(this.lastCapturerId)} (قاعدة آخر أخذة)`);
         }
         this.table = [];
         this._finish();
         return;
       }
     }
-    this.turnIndex = 1 - this.turnIndex;
+    this.turnIndex = (this.turnIndex + 1) % this.order.length;
     this.turnDeadline = Date.now() + CHKOBBA_TURN_TIMEOUT_MS;
   }
 
   _finish() {
     this.finished = true;
-    this.result = chkobbaComputeFinalScore(this.players, this.order);
+    this.result = chkobbaComputeFinalScore(this);
   }
 
   abort(reason, byUserId = null) {
@@ -458,72 +496,112 @@ function chkobbaComputePrimiera(capturedCards) {
   return { total, breakdown };
 }
 
-function chkobbaComputeFinalScore(players, order) {
-  const [p1id, p2id] = order;
+// يرجّع "مجموعات" التسجيل: كل لاعب لحاله (2/3 لاعبين) أو فريقين (4 لاعبين)
+function chkobbaGroupsFromGame(game) {
+  if (game.teams) {
+    return [
+      { id: 'A', memberIds: game.teams.A },
+      { id: 'B', memberIds: game.teams.B },
+    ];
+  }
+  return game.order.map(pid => ({ id: pid, memberIds: [pid] }));
+}
+
+function chkobbaAddPointForMax(groups, summary, field, flag) {
+  const max = Math.max(...groups.map(g => summary[g.id][field]));
+  const withMax = groups.filter(g => summary[g.id][field] === max);
+  if (withMax.length === 1) {
+    summary[withMax[0].id].points += 1;
+    summary[withMax[0].id][flag] = true;
+  }
+}
+
+function chkobbaComputeFinalScore(game) {
+  const groups = chkobbaGroupsFromGame(game);
   const summary = {};
-  for (const pid of order) {
-    const p = players[pid];
-    const denariCount = p.captured.filter(c => c.suit === 'denari').length;
-    const setteBello = p.captured.some(c => c.isSetteBello);
-    const primiera = chkobbaComputePrimiera(p.captured);
-    summary[pid] = {
-      scope: p.scope,
-      cardsCount: p.captured.length,
+
+  for (const g of groups) {
+    const capturedAll = g.memberIds.flatMap(pid => game.players[pid].captured);
+    const scopeSum = g.memberIds.reduce((s, pid) => s + game.players[pid].scope, 0);
+    const denariCount = capturedAll.filter(c => c.suit === 'denari').length;
+    const setteBello = capturedAll.some(c => c.isSetteBello);
+    const primiera = chkobbaComputePrimiera(capturedAll);
+    summary[g.id] = {
+      memberIds: g.memberIds,
+      scope: scopeSum,
+      cardsCount: capturedAll.length,
       denariCount,
       setteBello,
       primieraTotal: primiera.total,
-      points: p.scope,
+      points: scopeSum,
     };
   }
 
-  if (summary[p1id].cardsCount !== summary[p2id].cardsCount) {
-    const winner = summary[p1id].cardsCount > summary[p2id].cardsCount ? p1id : p2id;
-    summary[winner].points += 1;
-    summary[winner].wonCarte = true;
-  }
-  if (summary[p1id].denariCount !== summary[p2id].denariCount) {
-    const winner = summary[p1id].denariCount > summary[p2id].denariCount ? p1id : p2id;
-    summary[winner].points += 1;
-    summary[winner].wonDenari = true;
-  }
-  for (const pid of order) if (summary[pid].setteBello) summary[pid].points += 1;
-  if (summary[p1id].primieraTotal !== summary[p2id].primieraTotal) {
-    const winner = summary[p1id].primieraTotal > summary[p2id].primieraTotal ? p1id : p2id;
-    summary[winner].points += 1;
-    summary[winner].wonPrimiera = true;
-  }
+  chkobbaAddPointForMax(groups, summary, 'cardsCount', 'wonCarte');
+  chkobbaAddPointForMax(groups, summary, 'denariCount', 'wonDenari');
+  for (const g of groups) if (summary[g.id].setteBello) summary[g.id].points += 1;
+  chkobbaAddPointForMax(groups, summary, 'primieraTotal', 'wonPrimiera');
 
-  let winnerId = null;
-  if (summary[p1id].points !== summary[p2id].points) {
-    winnerId = summary[p1id].points > summary[p2id].points ? p1id : p2id;
-  }
-  return { aborted: false, summary, winnerId, order };
+  const maxPoints = Math.max(...groups.map(g => summary[g.id].points));
+  const winners = groups.filter(g => summary[g.id].points === maxPoints);
+  const winnerGroupId = winners.length === 1 ? winners[0].id : null;
+
+  return { aborted: false, summary, winnerGroupId, groups };
 }
 
-// ---------- إدارة الجلسات (تحديات معلّقة + لعبات جارية) ----------
+// ---------- ذكاء اصطناعي بسيط لوضع اللاعب الواحد ----------
+function chkobbaAiChooseMove(game) {
+  const ai = game.players[CHKOBBA_AI_ID];
+  let best = null; // { cardId, comboIndex, comboLen }
+
+  for (const card of ai.hand) {
+    const { options } = chkobbaGetCaptureOptions(card, game.table);
+    if (options.length === 0) continue;
+    let bestComboIdx = 0;
+    let bestComboLen = options[0].length;
+    for (let i = 1; i < options.length; i++) {
+      if (options[i].length > bestComboLen) { bestComboLen = options[i].length; bestComboIdx = i; }
+    }
+    if (!best || bestComboLen > best.comboLen) {
+      best = { cardId: card.id, comboIndex: bestComboIdx, comboLen: bestComboLen };
+    }
+  }
+  if (best) return best;
+
+  // ما فماش أخذ ممكن — يرمي أعلى ورقة عندو باش يتخلص منها
+  const sorted = ai.hand.slice().sort((a, b) => b.value - a.value);
+  return { cardId: sorted[0].id, comboIndex: 0, comboLen: 0 };
+}
+
+// ---------- إدارة الجلسات (اختيار العدد + غرف انتظار + لعبات جارية) ----------
 class ChkobbaGameManager {
   constructor() {
-    this.pendingChallenges = new Map(); // messageId -> { hostId, channelId }
-    this.activeGames = new Map();       // messageId -> ChkobbaGame
-    this.userToGame = new Map();        // userId -> messageId
+    this.pendingLobbies = new Map(); // messageId -> { hostId, channelId, targetCount, joined:[ids] }
+    this.activeGames = new Map();    // messageId -> ChkobbaGame
+    this.userToGame = new Map();     // userId -> messageId
   }
-  createChallenge(hostId, channelId, messageId) {
-    this.pendingChallenges.set(messageId, { hostId, channelId, createdAt: Date.now() });
+  registerLobby(messageId, hostId, channelId, targetCount) {
+    const lobby = { hostId, channelId, targetCount, joined: [hostId], createdAt: Date.now() };
+    this.pendingLobbies.set(messageId, lobby);
+    return lobby;
   }
-  getChallenge(messageId) { return this.pendingChallenges.get(messageId); }
-  removeChallenge(messageId) { this.pendingChallenges.delete(messageId); }
-  isUserBusy(userId) { return this.userToGame.has(userId); }
-  startGame(messageId, hostId, opponentId) {
-    const game = new ChkobbaGame(hostId, opponentId);
+  getLobby(messageId) { return this.pendingLobbies.get(messageId); }
+  removeLobby(messageId) { this.pendingLobbies.delete(messageId); }
+  isUserBusy(userId) {
+    if (this.userToGame.has(userId)) return true;
+    for (const lobby of this.pendingLobbies.values()) if (lobby.joined.includes(userId)) return true;
+    return false;
+  }
+  startGame(messageId, playerIds) {
+    const game = new ChkobbaGame(playerIds);
     this.activeGames.set(messageId, game);
-    this.userToGame.set(hostId, messageId);
-    this.userToGame.set(opponentId, messageId);
+    for (const pid of playerIds) if (pid !== CHKOBBA_AI_ID) this.userToGame.set(pid, messageId);
     return game;
   }
   getGame(messageId) { return this.activeGames.get(messageId); }
   endGame(messageId) {
     const game = this.activeGames.get(messageId);
-    if (game) for (const pid of game.order) this.userToGame.delete(pid);
+    if (game) for (const pid of game.order) if (pid !== CHKOBBA_AI_ID) this.userToGame.delete(pid);
     this.activeGames.delete(messageId);
   }
 }
@@ -532,6 +610,7 @@ const chkobbaManager = new ChkobbaGameManager();
 const chkobbaGameChannels = new Map();  // messageId -> channelId
 const chkobbaTurnTimers   = new Map();  // messageId -> Timeout
 const chkobbaPendingCombos = new Map(); // `${messageId}:${userId}` -> {cardId, options}
+const chkobbaPlayerThreads = new Map(); // `${messageId}:${userId}` -> { channelId, msgId }
 const CHKOBBA_COMMAND_NAME = 'chkobba';
 
 // ---------- بناء الواجهات (Embeds/Buttons/Select Menus) ----------
@@ -546,6 +625,33 @@ const CHKOBBA_IMG_GAP          = 14;  // مسافة بين البطاقات
 const CHKOBBA_IMG_LABEL_HEIGHT = 34;  // ارتفاع مكان كتابة الاسم تحت كل بطاقة
 const CHKOBBA_IMG_PADDING      = 16;  // حواف الصورة
 const CHKOBBA_IMG_BG_COLOR     = 0x2c3e50ff;
+
+// اسم ملف صورة "ضهر البطاقة" — لازم يكون بجانب bot.js في نفس مجلد بقية صور الأوراق
+const CHKOBBA_CARD_BACK_FILE = 'chkobba_card_back.jpg';
+
+// يركّب صورة فيها n بطاقة مقلوبة (ضهرها ظاهر فقط) — تُستعمل باش نوري
+// عدد الأوراق إلي عند كل لاعب بلا ما نكشف قيمتها.
+async function chkobbaComposeBackCardsImage(count) {
+  if (!count || count <= 0) return null;
+
+  const backPath = path.join(__dirname, CHKOBBA_CARD_BACK_FILE);
+  const backImg  = await Jimp.read(backPath);
+  backImg.resize(CHKOBBA_IMG_CARD_WIDTH, Jimp.AUTO);
+
+  const cardHeight   = backImg.bitmap.height;
+  const cellWidth    = CHKOBBA_IMG_CARD_WIDTH + CHKOBBA_IMG_GAP;
+  const canvasWidth  = cellWidth * count + CHKOBBA_IMG_GAP;
+  const canvasHeight = CHKOBBA_IMG_PADDING * 2 + cardHeight;
+
+  const canvas = await new Jimp(canvasWidth, canvasHeight, CHKOBBA_IMG_BG_COLOR);
+  for (let i = 0; i < count; i++) {
+    const x = CHKOBBA_IMG_GAP + i * cellWidth;
+    const y = CHKOBBA_IMG_PADDING;
+    canvas.composite(backImg, x, y);
+  }
+
+  return canvas.getBufferAsync(Jimp.MIME_PNG);
+}
 
 async function chkobbaComposeCardsImage(cards) {
   if (!cards || cards.length === 0) return null;
@@ -576,7 +682,7 @@ async function chkobbaComposeCardsImage(cards) {
       x - 10,
       y + cardHeight + 4,
       {
-        text: String(card.value),
+        text: card.shortLabel,
         alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
         alignmentY: Jimp.VERTICAL_ALIGN_TOP,
       },
@@ -588,47 +694,73 @@ async function chkobbaComposeCardsImage(cards) {
   return canvas.getBufferAsync(Jimp.MIME_PNG);
 }
 
-function chkobbaBuildLobbyEmbed(hostId) {
+// ---------- اختيار عدد اللاعبين ----------
+function chkobbaBuildCountSelectEmbed(hostId) {
   return new EmbedBuilder()
     .setColor(0x1abc9c)
-    .setTitle('🃏 تحدي الشكوبة التونسية')
+    .setTitle('🃏 شكوبة تونسية — اختر عدد اللاعبين')
     .setDescription(
-      `<@${hostId}> يبحث عن خصم!\n\n` +
-      `> اضغط الزر أدناه لقبول المواجهة.\n` +
-      `> اللعبة بين لاعبين فقط، ولا يمكن لأي شخص ثالث المشاركة.`
+      `${chkobbaMention(hostId)} اختر عدد اللاعبين للعبة:\n\n` +
+      `> **1** — تلعب لوحدك ضد البوت 🤖\n` +
+      `> **2** — لاعب ضد لاعب\n` +
+      `> **3** — كل واحد لحاله (بدون فرق)\n` +
+      `> **4** — فرق (2 ضد 2 — اللي يقابلك هو شريكك)`
+    )
+    .setFooter({ text: 'IYNexx • Chkobba Tunisienne' });
+}
+
+function chkobbaBuildCountSelectRow(hostId) {
+  const row = new ActionRowBuilder();
+  for (let n = 1; n <= 4; n++) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`chkobba_count_${n}_${hostId}`)
+        .setLabel(n === 1 ? '1 🤖' : `${n} لاعبين`)
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+  return row;
+}
+
+// ---------- غرفة الانتظار ----------
+function chkobbaBuildLobbyEmbed(lobby) {
+  const joinedList = lobby.joined.map(id => chkobbaMention(id)).join('\n') || '—';
+  return new EmbedBuilder()
+    .setColor(0x1abc9c)
+    .setTitle('🃏 بانتظار اللاعبين')
+    .setDescription(
+      `**${lobby.joined.length}/${lobby.targetCount}** انضموا حتى الآن:\n${joinedList}\n\n` +
+      `> اضغط الزر أدناه للانضمام.`
     )
     .setFooter({ text: 'IYNexx • Chkobba Tunisienne' })
     .setTimestamp();
 }
 
-function chkobbaBuildJoinRow(hostId) {
+function chkobbaBuildJoinRow(messageId) {
   const btn = new ButtonBuilder()
-    .setCustomId(`chkobba_join_${hostId}`)
-    .setLabel('⚔️ مواجهة')
+    .setCustomId(`chkobba_lobbyjoin_${messageId}`)
+    .setLabel('⚔️ انضمام')
     .setStyle(ButtonStyle.Success);
   return new ActionRowBuilder().addComponents(btn);
 }
 
-async function chkobbaBuildPublicGameView(game, messageId) {
+async function chkobbaBuildPublicGameView(game, messageId, threadFallbackForIds = []) {
   const files = [];
-  const p1 = game.order[0];
-  const p2 = game.order[1];
-  const s1 = game.players[p1];
-  const s2 = game.players[p2];
+
+  const scoreLines = game.order.map(pid => {
+    const s = game.players[pid];
+    let teamTag = '';
+    if (game.teams) teamTag = game.teams.A.includes(pid) ? ' [فريق A]' : ' [فريق B]';
+    return `${chkobbaMention(pid)}${teamTag} — 🧹 شكوبة: **${s.scope}** | 🎴 أوراق: **${s.captured.length}**`;
+  });
 
   const main = new EmbedBuilder()
     .setColor(0x3498db)
     .setTitle('🃏 الشكوبة التونسية — اللعبة جارية')
     .addFields(
-      { name: '👤 اللاعبون', value: `<@${p1}> ⚔️ <@${p2}>`, inline: false },
-      {
-        name: '📊 النقاط الحالية',
-        value:
-          `<@${p1}> — 🧹 شكوبة: **${s1.scope}** | 🎴 أوراق: **${s1.captured.length}**\n` +
-          `<@${p2}> — 🧹 شكوبة: **${s2.scope}** | 🎴 أوراق: **${s2.captured.length}**`,
-        inline: false,
-      },
-      { name: '🀄 الدور الحالي', value: `<@${game.currentPlayerId}>`, inline: true },
+      { name: '👤 اللاعبون', value: game.order.map(pid => chkobbaMention(pid)).join(' ⚔️ '), inline: false },
+      { name: '📊 النقاط الحالية', value: scoreLines.join('\n'), inline: false },
+      { name: '🀄 الدور الحالي', value: chkobbaMention(game.currentPlayerId), inline: true },
       { name: '📦 الرزمة المتبقية', value: `${game.deck.length} ورقة`, inline: true },
     )
     .setDescription(
@@ -641,21 +773,63 @@ async function chkobbaBuildPublicGameView(game, messageId) {
 
   if (game.log.length > 0) main.addFields({ name: '📜 آخر الأحداث', value: game.log.slice(-4).join('\n') });
 
-  // صورة واحدة تجمع كل بطاقات الطاولة مع اسم كل بطاقة تحتها
+  // صورة واحدة تجمع كل بطاقات الطاولة — باسم فريد في كل مرة (يمنع كاش الصور القديمة)
   if (game.table.length > 0) {
     const buffer = await chkobbaComposeCardsImage(game.table);
     if (buffer) {
-      files.push(new AttachmentBuilder(buffer, { name: 'chkobba_table.png' }));
-      main.setImage('attachment://chkobba_table.png');
+      const fileName = chkobbaUniqueFileName('chkobba_table');
+      files.push(new AttachmentBuilder(buffer, { name: fileName }));
+      main.setImage(`attachment://${fileName}`);
     }
   }
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`chkobba_hand_${messageId}`).setLabel('🃏 عرض يدي واللعب').setStyle(ButtonStyle.Primary),
+  // ── أيادي اللاعبين مقلوبة (ضهر البطاقة) ──
+  // كل لاعب عندو Embed صغير يوري عدد الأوراق إلي بيدو، بصورة "ضهر البطاقة"
+  // فقط — بلا ما تنكشف قيمها لأي حد. هكا يشوف الجميع كم ورقة عند كل واحد.
+  const embeds = [main];
+  for (const pid of game.order) {
+    const s = game.players[pid];
+    if (s.hand.length === 0) continue;
+
+    const backBuffer = await chkobbaComposeBackCardsImage(s.hand.length);
+    if (!backBuffer) continue;
+
+    const backFileName = chkobbaUniqueFileName(`chkobba_backhand_${pid}`);
+    files.push(new AttachmentBuilder(backBuffer, { name: backFileName }));
+
+    let teamTag = '';
+    if (game.teams) teamTag = game.teams.A.includes(pid) ? ' [فريق A]' : ' [فريق B]';
+
+    embeds.push(new EmbedBuilder()
+      .setColor(0x2c3e50)
+      .setDescription(`🂠 يد ${chkobbaMention(pid)}${teamTag} — **${s.hand.length}** أوراق`)
+      .setImage(`attachment://${backFileName}`));
+  }
+
+  const rowButtons = [];
+  if (threadFallbackForIds.length > 0) {
+    rowButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`chkobba_hand_${messageId}`)
+        .setLabel('🃏 عرض يدي واللعب (احتياطي)')
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+  rowButtons.push(
     new ButtonBuilder().setCustomId(`chkobba_quit_${messageId}`).setLabel('🚪 الانسحاب من اللعبة').setStyle(ButtonStyle.Danger)
   );
+  const row = new ActionRowBuilder().addComponents(rowButtons);
 
-  return { embeds: [main], files, components: [row] };
+  if (threadFallbackForIds.length > 0) {
+    main.addFields({
+      name: '⚠️ تنبيه',
+      value: `تعذّر فتح غرفة خاصة لـ ${threadFallbackForIds.map(pid => chkobbaMention(pid)).join('، ')} — يستعمل الزر الاحتياطي تحت.`,
+    });
+  } else {
+    main.addFields({ name: 'ℹ️ يدك', value: 'شوف غرفتك الخاصة (Thread) اللي فتحلك البوت — يدك ظاهرة فيها طول اللعبة.' });
+  }
+
+  return { embeds, files, components: [row] };
 }
 
 async function chkobbaBuildHandView(game, playerId, messageId) {
@@ -668,12 +842,13 @@ async function chkobbaBuildHandView(game, playerId, messageId) {
     .setDescription('اضغط على الزر المطابق للورقة التي تريد لعبها 👇')
     .setFooter({ text: 'هذه الرسالة تظهر لك فقط' });
 
-  // صورة واحدة تجمع كل بطاقات يدك مع اسم كل بطاقة تحتها
+  // صورة واحدة تجمع كل بطاقات يدك — باسم فريد في كل مرة (يمنع عرض صورة قديمة/غالطة)
   if (player.hand.length > 0) {
     const buffer = await chkobbaComposeCardsImage(player.hand);
     if (buffer) {
-      files.push(new AttachmentBuilder(buffer, { name: 'chkobba_hand.png' }));
-      embed.setImage('attachment://chkobba_hand.png');
+      const fileName = chkobbaUniqueFileName(`chkobba_hand_${playerId}`);
+      files.push(new AttachmentBuilder(buffer, { name: fileName }));
+      embed.setImage(`attachment://${fileName}`);
     }
   }
 
@@ -712,15 +887,16 @@ function chkobbaBuildComboSelect(messageId, cardId, options) {
 }
 
 function chkobbaBuildFinalResultEmbed(game) {
-  const { summary, winnerId, order } = game.result;
+  const { summary, winnerGroupId, groups } = game.result;
   const embed = new EmbedBuilder()
     .setColor(0xf1c40f)
     .setTitle('🏁 انتهت لعبة الشكوبة!')
     .setTimestamp()
     .setFooter({ text: 'IYNexx • Chkobba Tunisienne' });
 
-  for (const pid of order) {
-    const s = summary[pid];
+  for (const g of groups) {
+    const s = summary[g.id];
+    const nameLabel = g.memberIds.map(pid => chkobbaMention(pid)).join(' + ');
     const lines = [
       `🧹 شكوبة: **${s.scope}** نقطة`,
       `🎴 أكثر أوراق: ${s.wonCarte ? '✅ +1' : '—'}`,
@@ -729,16 +905,18 @@ function chkobbaBuildFinalResultEmbed(game) {
       `🃏 البريم: ${s.wonPrimiera ? `✅ +1 (${s.primieraTotal})` : `— (${s.primieraTotal})`}`,
       `**المجموع: ${s.points} نقطة**`,
     ];
-    embed.addFields({ name: `👤 <@${pid}>`, value: lines.join('\n'), inline: true });
+    embed.addFields({ name: `👤 ${nameLabel}`, value: lines.join('\n'), inline: true });
   }
-  embed.setDescription(winnerId ? `🏆 الفائز: <@${winnerId}>` : '🤝 تعادل!');
+  embed.setDescription(winnerGroupId
+    ? `🏆 الفائز: ${groups.find(g => g.id === winnerGroupId).memberIds.map(pid => chkobbaMention(pid)).join(' + ')}`
+    : '🤝 تعادل!');
   return embed;
 }
 
 function chkobbaBuildAbortEmbed(reason, byUserId) {
   const reasons = {
     timeout: '⏳ انتهت اللعبة بسبب انتهاء وقت أحد اللاعبين.',
-    left: `🚪 انسحب <@${byUserId}> من اللعبة، تم إلغاء المباراة.`,
+    left: `🚪 انسحب ${chkobbaMention(byUserId)} من اللعبة، تم إلغاء المباراة.`,
     error: '⚠️ حدث خطأ غير متوقع، تم إلغاء المباراة.',
   };
   return new EmbedBuilder()
@@ -752,7 +930,7 @@ function chkobbaBuildAbortEmbed(reason, byUserId) {
 async function chkobbaRegisterCommands(discordClient) {
   const command = new SlashCommandBuilder()
     .setName(CHKOBBA_COMMAND_NAME)
-    .setDescription('ابدأ لعبة شكوبة تونسية مع لاعب آخر في هذه القناة');
+    .setDescription('ابدأ لعبة شكوبة تونسية (1 ضد بوت أو 2/3/4 لاعبين) في هذه القناة');
   try {
     const guildId = process.env.CHKOBBA_GUILD_ID;
     if (guildId) {
@@ -780,7 +958,7 @@ async function chkobbaFetchPublicMessage(discordClient, messageId) {
   } catch { return null; }
 }
 
-async function chkobbaUpdatePublicView(discordClient, messageId, game) {
+async function chkobbaUpdatePublicView(discordClient, messageId, game, threadFallbackForIds = []) {
   const message = await chkobbaFetchPublicMessage(discordClient, messageId);
   if (!message) return;
   try {
@@ -791,7 +969,7 @@ async function chkobbaUpdatePublicView(discordClient, messageId, game) {
         await message.edit({ embeds: [chkobbaBuildFinalResultEmbed(game)], components: [], files: [] });
       }
     } else {
-      const view = await chkobbaBuildPublicGameView(game, messageId);
+      const view = await chkobbaBuildPublicGameView(game, messageId, threadFallbackForIds);
       await message.edit(view);
     }
   } catch (err) {
@@ -813,6 +991,7 @@ function chkobbaScheduleTimeout(discordClient, messageId) {
     if (!game.isTimedOut()) return;
     game.abort('timeout');
     await chkobbaUpdatePublicView(discordClient, messageId, game);
+    await chkobbaCloseAllPlayerThreads(discordClient, messageId, game);
     chkobbaCleanupGame(messageId);
   }, CHKOBBA_TURN_TIMEOUT_MS + 500);
   chkobbaTurnTimers.set(messageId, timer);
@@ -824,6 +1003,9 @@ function chkobbaCleanupGame(messageId) {
   chkobbaManager.endGame(messageId);
   for (const key of [...chkobbaPendingCombos.keys()]) {
     if (key.startsWith(`${messageId}:`)) chkobbaPendingCombos.delete(key);
+  }
+  for (const key of [...chkobbaPlayerThreads.keys()]) {
+    if (key.startsWith(`${messageId}:`)) chkobbaPlayerThreads.delete(key);
   }
 }
 
@@ -837,52 +1019,225 @@ async function chkobbaSafeReplyEphemeral(interaction, content) {
   }
 }
 
+// ينشئ (أول مرة) أو يحدّث (المرات إلي بعدها) غرفة خاصة (Private Thread)
+// للاعب معيّن — تبقى مفتوحة طول اللعبة، وتتحدّث فيها يده الحقيقية وأزرار
+// اللعب تلقائياً في كل مرة، بلا ما يحتاج يضغط أي شيء باش يفتحها. خصمو
+// ما ينضمش لهذا الثريد، فما يقدرش يشوف بطاقاتو.
+async function chkobbaEnsurePlayerThreadView(discordClient, messageId, game, pid) {
+  if (pid === CHKOBBA_AI_ID) return true;
+  const key = `${messageId}:${pid}`;
+  const view = await chkobbaBuildHandView(game, pid, messageId);
+
+  const existing = chkobbaPlayerThreads.get(key);
+  if (existing) {
+    try {
+      const thread = await discordClient.channels.fetch(existing.channelId);
+      const msg = await thread.messages.fetch(existing.msgId);
+      await msg.edit(view);
+      return true;
+    } catch {
+      chkobbaPlayerThreads.delete(key); // الثريد انمحى أو صار خطأ — نعاود ننشئوه تحت
+    }
+  }
+
+  try {
+    const parentChannelId = chkobbaGameChannels.get(messageId);
+    const parentChannel = await discordClient.channels.fetch(parentChannelId);
+    const user = await discordClient.users.fetch(pid);
+    const thread = await parentChannel.threads.create({
+      name: `🃏-يد-${user.username}`.slice(0, 90),
+      type: ChannelType.PrivateThread,
+      invitable: false,
+      autoArchiveDuration: 60,
+      reason: 'غرفة خاصة ليد لاعب في الشكوبة',
+    });
+    await thread.members.add(pid).catch(() => {});
+    const msg = await thread.send({ content: '🀄 هذي غرفتك الخاصة — يدك تبقى ظاهرة هنا طول اللعبة، اختار مباشرة من الأزرار:', ...view });
+    chkobbaPlayerThreads.set(key, { channelId: thread.id, msgId: msg.id });
+    return true;
+  } catch (err) {
+    console.error('❌ فشل فتح ثريد خاص للاعب في الشكوبة:', err.message);
+    return false;
+  }
+}
+
+async function chkobbaSyncAllPlayerThreads(discordClient, messageId, game) {
+  const failedIds = [];
+  for (const pid of game.order) {
+    if (pid === CHKOBBA_AI_ID) continue;
+    const ok = await chkobbaEnsurePlayerThreadView(discordClient, messageId, game, pid);
+    if (!ok) failedIds.push(pid);
+  }
+  return failedIds;
+}
+
+async function chkobbaCloseAllPlayerThreads(discordClient, messageId, game) {
+  for (const pid of game.order) {
+    const key = `${messageId}:${pid}`;
+    const ref = chkobbaPlayerThreads.get(key);
+    if (!ref) continue;
+    try {
+      const thread = await discordClient.channels.fetch(ref.channelId);
+      await thread.send('🏁 انتهت اللعبة — رجع للرسالة الرئيسية باش تشوف النتيجة.').catch(() => {});
+      await thread.setArchived(true).catch(() => {});
+    } catch {}
+  }
+}
+
+// يشغّل دور البوت تلقائياً إذا كان الدور الحالي لو (وضع اللاعب الواحد)
+async function chkobbaMaybePlayAiTurn(discordClient, messageId) {
+  const game = chkobbaManager.getGame(messageId);
+  if (!game || game.finished || game.currentPlayerId !== CHKOBBA_AI_ID) return;
+
+  await new Promise(res => setTimeout(res, 1200));
+
+  const freshGame = chkobbaManager.getGame(messageId);
+  if (!freshGame || freshGame.finished || freshGame.currentPlayerId !== CHKOBBA_AI_ID) return;
+
+  const move = chkobbaAiChooseMove(freshGame);
+  freshGame.playCard(CHKOBBA_AI_ID, move.cardId, move.comboIndex);
+
+  await chkobbaAfterStateChange(discordClient, messageId, freshGame);
+}
+
+// نقطة مركزية تُستدعى بعد أي حركة: تحدّث غرفة كل لاعب الخاصة بيده الحقيقية
+// الجديدة (تلقائياً، بلا ضغط)، تحدّث اللوحة العامة (ضهر بطاقات بس)، وتشغّل
+// دور البوت تلقائياً إذا لزم.
+async function chkobbaAfterStateChange(discordClient, messageId, game) {
+  if (game.finished) {
+    await chkobbaUpdatePublicView(discordClient, messageId, game);
+    await chkobbaCloseAllPlayerThreads(discordClient, messageId, game);
+    chkobbaCleanupGame(messageId);
+    return;
+  }
+
+  chkobbaScheduleTimeout(discordClient, messageId);
+
+  const failedIds = await chkobbaSyncAllPlayerThreads(discordClient, messageId, game);
+  await chkobbaUpdatePublicView(discordClient, messageId, game, failedIds);
+
+  if (game.currentPlayerId === CHKOBBA_AI_ID) {
+    chkobbaMaybePlayAiTurn(discordClient, messageId);
+  }
+}
+
+// يتحقق قبل بداية اللعبة إذا كانت القناة تدعم فتح غرف خاصة (Threads) —
+// شات الفويس مثلاً ما يدعمهاش، وهذا كان سبب فشل فتح الغرفة الخاصة سابقاً.
+function chkobbaCheckThreadSupport(channel, botMember) {
+  if (!channel || typeof channel.threads?.create !== 'function') {
+    return { ok: false, reason: 'not_text_channel' };
+  }
+  const perms = channel.permissionsFor(botMember);
+  if (!perms) return { ok: false, reason: 'unknown' };
+  if (!perms.has(PermissionFlagsBits.CreatePrivateThreads) || !perms.has(PermissionFlagsBits.SendMessagesInThreads)) {
+    return { ok: false, reason: 'missing_perm' };
+  }
+  return { ok: true };
+}
+
+function chkobbaThreadSupportErrorMessage(reason) {
+  if (reason === 'not_text_channel') {
+    return '⚠️ شغّل `/chkobba` جوه **قناة نصية عادية (Text Channel)** — مش داخل شات الفويس 🔊. شات الفويس ما يدعمش فتح "غرف خاصة" (Threads)، وهذا كان سبب المشكلة اللي شفتها. جرّب في أي قناة نصية عادية.';
+  }
+  if (reason === 'missing_perm') {
+    return '⚠️ البوت ماعندوش صلاحية "Create Private Threads" / "Send Messages in Threads" في هذه القناة. أعطي البوت هذي الصلاحيات (من إعدادات القناة أو رتبة البوت) وأعد المحاولة.';
+  }
+  return '⚠️ تعذّر التحقق من صلاحيات القناة، حاول في قناة نصية أخرى.';
+}
+
 // ---------- المعالج الرئيسي لتفاعلات الشكوبة ----------
 async function chkobbaHandleInteraction(interaction) {
   try {
-    // ── أمر /chkobba ──
+    // ── أمر /chkobba: أول خطوة اختيار عدد اللاعبين ──
     if (interaction.isChatInputCommand() && interaction.commandName === CHKOBBA_COMMAND_NAME) {
       if (chkobbaManager.isUserBusy(interaction.user.id)) {
-        await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة شكوبة جارية!', ephemeral: true });
+        await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة أو غرفة انتظار شكوبة جارية!', ephemeral: true });
         return true;
       }
+
+      const support = chkobbaCheckThreadSupport(interaction.channel, interaction.guild.members.me);
+      if (!support.ok) {
+        await interaction.reply({ content: chkobbaThreadSupportErrorMessage(support.reason), ephemeral: true });
+        return true;
+      }
+
       const hostId = interaction.user.id;
-      await interaction.reply({ embeds: [chkobbaBuildLobbyEmbed(hostId)], components: [chkobbaBuildJoinRow(hostId)] });
-      const msg = await interaction.fetchReply();
-      chkobbaManager.createChallenge(hostId, interaction.channelId, msg.id);
-      chkobbaGameChannels.set(msg.id, interaction.channelId);
+      await interaction.reply({ embeds: [chkobbaBuildCountSelectEmbed(hostId)], components: [chkobbaBuildCountSelectRow(hostId)] });
       return true;
     }
 
     const customId = interaction.customId;
     if (!customId || !customId.startsWith('chkobba_')) return false;
 
-    // ── زر "مواجهة" ──
-    if (interaction.isButton() && customId.startsWith('chkobba_join_')) {
-      const hostId = chkobbaParseAfterPrefix(customId, 'chkobba_join_');
-      const messageId = interaction.message.id;
-      const challenge = chkobbaManager.getChallenge(messageId);
+    // ── اختيار عدد اللاعبين ──
+    if (interaction.isButton() && customId.startsWith('chkobba_count_')) {
+      const rest = chkobbaParseAfterPrefix(customId, 'chkobba_count_');
+      const sepIdx = rest.indexOf('_');
+      const n = parseInt(rest.slice(0, sepIdx), 10);
+      const hostId = rest.slice(sepIdx + 1);
 
-      if (!challenge) {
-        await interaction.reply({ content: '❌ هذا التحدي لم يعد متاحاً.', ephemeral: true });
+      if (interaction.user.id !== hostId) {
+        await interaction.reply({ content: '❌ هذا الاختيار لصاحب الطلب فقط.', ephemeral: true });
         return true;
       }
-      if (interaction.user.id === hostId) {
-        await interaction.reply({ content: '❌ لا يمكنك مواجهة نفسك!', ephemeral: true });
-        return true;
-      }
-      if (chkobbaManager.isUserBusy(interaction.user.id) || chkobbaManager.isUserBusy(hostId)) {
-        await interaction.reply({ content: '⚠️ أحد اللاعبين في لعبة أخرى بالفعل.', ephemeral: true });
+      if (chkobbaManager.isUserBusy(hostId)) {
+        await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة أو غرفة انتظار.', ephemeral: true });
         return true;
       }
 
-      chkobbaManager.removeChallenge(messageId);
-      const game = chkobbaManager.startGame(messageId, hostId, interaction.user.id);
-      chkobbaGameChannels.set(messageId, interaction.channelId);
+      if (n === 1) {
+        await interaction.update({ content: '⏳ جاري تجهيز اللعبة ضد البوت...', embeds: [], components: [] });
+        const msg = await interaction.fetchReply();
+        chkobbaGameChannels.set(msg.id, interaction.channelId);
+        const game = chkobbaManager.startGame(msg.id, [hostId, CHKOBBA_AI_ID]);
+        chkobbaScheduleTimeout(interaction.client, msg.id);
+        const failedIds = await chkobbaSyncAllPlayerThreads(interaction.client, msg.id, game);
+        const view = await chkobbaBuildPublicGameView(game, msg.id, failedIds);
+        await interaction.editReply({ content: null, ...view });
+        return true;
+      }
 
-      const view = await chkobbaBuildPublicGameView(game, messageId);
-      await interaction.update(view);
+      await interaction.update({ content: '⏳ جاري إنشاء غرفة الانتظار...', embeds: [], components: [] });
+      const msg = await interaction.fetchReply();
+      chkobbaGameChannels.set(msg.id, interaction.channelId);
+      const lobby = chkobbaManager.registerLobby(msg.id, hostId, interaction.channelId, n);
+      await interaction.editReply({ content: null, embeds: [chkobbaBuildLobbyEmbed(lobby)], components: [chkobbaBuildJoinRow(msg.id)] });
+      return true;
+    }
+
+    // ── زر "انضمام" لغرفة الانتظار ──
+    if (interaction.isButton() && customId.startsWith('chkobba_lobbyjoin_')) {
+      const messageId = chkobbaParseAfterPrefix(customId, 'chkobba_lobbyjoin_');
+      const lobby = chkobbaManager.getLobby(messageId);
+
+      if (!lobby) {
+        await interaction.reply({ content: '❌ غرفة الانتظار هذه لم تعد متاحة.', ephemeral: true });
+        return true;
+      }
+      const uid = interaction.user.id;
+      if (lobby.joined.includes(uid)) {
+        await interaction.reply({ content: '✅ أنت منضم بالفعل، استنى بقية اللاعبين.', ephemeral: true });
+        return true;
+      }
+      if (chkobbaManager.isUserBusy(uid)) {
+        await interaction.reply({ content: '⚠️ أنت بالفعل في لعبة أو غرفة انتظار أخرى.', ephemeral: true });
+        return true;
+      }
+
+      lobby.joined.push(uid);
+
+      if (lobby.joined.length < lobby.targetCount) {
+        await interaction.update({ embeds: [chkobbaBuildLobbyEmbed(lobby)], components: [chkobbaBuildJoinRow(messageId)] });
+        return true;
+      }
+
+      // اكتمل عدد اللاعبين — ابدأ اللعبة
+      chkobbaManager.removeLobby(messageId);
+      const game = chkobbaManager.startGame(messageId, lobby.joined);
       chkobbaScheduleTimeout(interaction.client, messageId);
+      const failedIds = await chkobbaSyncAllPlayerThreads(interaction.client, messageId, game);
+      const view = await chkobbaBuildPublicGameView(game, messageId, failedIds);
+      await interaction.update(view);
       return true;
     }
 
@@ -926,6 +1281,7 @@ async function chkobbaHandleInteraction(interaction) {
       game.abort('left', interaction.user.id);
       await interaction.deferUpdate();
       await chkobbaUpdatePublicView(interaction.client, messageId, game);
+      await chkobbaCloseAllPlayerThreads(interaction.client, messageId, game);
       chkobbaCleanupGame(messageId);
       return true;
     }
@@ -963,11 +1319,8 @@ async function chkobbaHandleInteraction(interaction) {
 
       game.playCard(interaction.user.id, cardId, 0);
       await interaction.deferUpdate();
-      await interaction.deleteReply().catch(() => {});
 
-      await chkobbaUpdatePublicView(interaction.client, messageId, game);
-      if (game.finished) chkobbaCleanupGame(messageId);
-      else chkobbaScheduleTimeout(interaction.client, messageId);
+      await chkobbaAfterStateChange(interaction.client, messageId, game);
       return true;
     }
 
@@ -994,11 +1347,8 @@ async function chkobbaHandleInteraction(interaction) {
 
       game.playCard(interaction.user.id, cardId, comboIndex);
       await interaction.deferUpdate();
-      await interaction.deleteReply().catch(() => {});
 
-      await chkobbaUpdatePublicView(interaction.client, messageId, game);
-      if (game.finished) chkobbaCleanupGame(messageId);
-      else chkobbaScheduleTimeout(interaction.client, messageId);
+      await chkobbaAfterStateChange(interaction.client, messageId, game);
       return true;
     }
 
@@ -1531,7 +1881,7 @@ client.on('messageCreate', async (message) => {
         { name: '➖ `/-$:@شخص مبلغ`',        value: 'سحب مال (أدمن/قائد)' },
         { name: '🛒 `/TR:"عنوان"-DS:"وصف"-IMG:"رابط"-SM:"سعر"(حسابات)`',
           value: 'إنشاء منتج — (أدمن/قائد)\nمثال: `(name:01/psw:123,name:02/psw:456)`' },
-        { name: '🃏 `/chkobba`',              value: 'ابدأ لعبة شكوبة تونسية (Slash Command) مع لاعب آخر — للجميع' },
+        { name: '🃏 `/chkobba`',              value: 'ابدأ لعبة شكوبة تونسية (Slash Command) — 1 ضد بوت 🤖 أو 2/3/4 لاعبين — للجميع' },
       );
     await message.channel.send({ embeds: [embed] });
     await message.delete().catch(() => {});

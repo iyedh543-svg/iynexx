@@ -226,18 +226,23 @@ function scheduleNextGG() {
 //
 // تحديثات في هذه النسخة:
 //  1) تصحيح تسمية القيمتين 8 و 9 (كانتا مقلوبتين).
-//  2) يدك الحقيقية تشوفها بضغطة وحدة على زر "عرض يدي واللعب" — تجيك
-//     رسالة *خاصة بيك بس* (ephemeral) فيها بطاقاتك الحقيقية وأزرار
-//     تختار منها. خصمك ما يشوفهاش خالص. بلا رسائل خاصة (DM) نهائياً —
-//     ديسكورد أصلاً ما يسمحش نبعثو ephemeral بلا ضغطة من صاحبها.
+//  2) كل لاعب يوصلو تلقائياً "ثريد خاص" (Private Thread) جوه نفس
+//     القناة، يفتحو البوت لوحدو مع اللاعب بلا ما يحتاج يضغط أي زر ولا
+//     رسالة خاصة (DM). فيه بطاقاته الحقيقية وأزرار يختار منها مباشرة،
+//     ويبقى مفتوح ومتحدّث تلقائياً طول اللعبة (كل ما يلعب هو أو خصمو
+//     تتبدّل الصورة/الأزرار وحدها). خصومو ما ينضموش لهذا الثريد، فما
+//     يقدروش يشوفو بطاقاتو أبداً — يشوفو غير ضهرها في اللوحة العامة.
+//     زر "عرض يدي" الاحتياطي (ephemeral) ما يظهرش إلا إذا تعذّر فتح
+//     الثريد الخاص لسبب تقني (صلاحيات/مستوى بوست السيرفر مثلاً).
 //  3) كل صورة (يد/طاولة) تتولد باسم ملف فريد في كل مرة، باش نتفادى أي
 //     تضارب/كاش في الصور بين اللاعبين.
 //  4) دعم حقيقي للعب بـ 1 (ضد بوت 🤖) أو 2 أو 3 أو 4 لاعبين — وفي وضع
 //     الـ 4 لاعبين اللعب يكون فرق (2 ضد 2، كل لاعب مع الي في مقابلو).
-//  5) اللوحة العامة توري يد كل لاعب مقلوبة (ضهر البطاقة فقط) باش يشوف
-//     الجميع كم ورقة عند كل واحد، بلا ما تنكشف قيمها لحتى حد.
-//  6) لما تنتهي اللعبة، نفس الرسالة تتبدّل بالكامل لتوري النتيجة النهائية
-//     فقط (بلا أزرار ولا صور قديمة).
+//  5) اللوحة العامة (يشوفها الجميع) توري يد كل لاعب مقلوبة (ضهر
+//     البطاقة فقط) باش يشوف الجميع كم ورقة عند كل واحد، بلا ما تنكشف
+//     قيمها لحتى حد.
+//  6) لما تنتهي اللعبة، اللوحة العامة تتبدّل بالكامل لتوري النتيجة
+//     النهائية فقط (بلا أزرار ولا صور قديمة)، وثريدات اللاعبين تتقفل.
 
 // ---------- تعريف الورقة والرزمة ----------
 const CHKOBBA_SUITS = ['denari', 'coppe', 'spade', 'bastoni'];
@@ -1155,7 +1160,8 @@ async function chkobbaHandleInteraction(interaction) {
         chkobbaGameChannels.set(msg.id, interaction.channelId);
         const game = chkobbaManager.startGame(msg.id, [hostId, CHKOBBA_AI_ID]);
         chkobbaScheduleTimeout(interaction.client, msg.id);
-        const view = await chkobbaBuildPublicGameView(game, msg.id);
+        const failedIds = await chkobbaSyncAllPlayerThreads(interaction.client, msg.id, game);
+        const view = await chkobbaBuildPublicGameView(game, msg.id, failedIds);
         await interaction.editReply({ content: null, ...view });
         return true;
       }
@@ -1198,7 +1204,8 @@ async function chkobbaHandleInteraction(interaction) {
       chkobbaManager.removeLobby(messageId);
       const game = chkobbaManager.startGame(messageId, lobby.joined);
       chkobbaScheduleTimeout(interaction.client, messageId);
-      const view = await chkobbaBuildPublicGameView(game, messageId);
+      const failedIds = await chkobbaSyncAllPlayerThreads(interaction.client, messageId, game);
+      const view = await chkobbaBuildPublicGameView(game, messageId, failedIds);
       await interaction.update(view);
       return true;
     }
@@ -1243,6 +1250,7 @@ async function chkobbaHandleInteraction(interaction) {
       game.abort('left', interaction.user.id);
       await interaction.deferUpdate();
       await chkobbaUpdatePublicView(interaction.client, messageId, game);
+      await chkobbaCloseAllPlayerThreads(interaction.client, messageId, game);
       chkobbaCleanupGame(messageId);
       return true;
     }
@@ -1280,7 +1288,6 @@ async function chkobbaHandleInteraction(interaction) {
 
       game.playCard(interaction.user.id, cardId, 0);
       await interaction.deferUpdate();
-      await interaction.deleteReply().catch(() => {});
 
       await chkobbaAfterStateChange(interaction.client, messageId, game);
       return true;
@@ -1309,7 +1316,6 @@ async function chkobbaHandleInteraction(interaction) {
 
       game.playCard(interaction.user.id, cardId, comboIndex);
       await interaction.deferUpdate();
-      await interaction.deleteReply().catch(() => {});
 
       await chkobbaAfterStateChange(interaction.client, messageId, game);
       return true;
